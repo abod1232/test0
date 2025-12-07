@@ -201,7 +201,7 @@ class Anime3rb : MainAPI() {
                             headers = mapOf(
                                 "User-Agent" to videoHeaders["User-Agent"]!!,
                                 "Referer" to "https://video.vid3rb.com/"
-                                }
+                           }
                         )
                     )
                 }
