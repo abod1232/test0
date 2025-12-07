@@ -199,10 +199,10 @@ class Anime3rb : MainAPI() {
                             referer = "https://video.vid3rb.com/" // مهم لتشغيل الفيديو
                             quality = Qualities.Unknown.value
                             headers = mapOf(
-                                "User-Agent" to videoHeaders["User-Agent"]!!,
+            "User-Agent" to videoHeaders["User-Agent"]!!,
                                 "Referer" to "https://video.vid3rb.com/"
-                           }
-                        )
+                           )
+                        }
                     )
                 }
             } catch (e: Exception) {
