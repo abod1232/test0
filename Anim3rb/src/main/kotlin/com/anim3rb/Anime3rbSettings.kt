@@ -12,6 +12,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -23,10 +24,15 @@ import android.widget.Toast
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.FragmentContainerView
 import androidx.fragment.app.FragmentManager
-import androidx.preference.Preference
-import androidx.preference.PreferenceCategory
-import androidx.preference.PreferenceFragmentCompat
-import android.webkit.WebResourceRequest
+
+/**
+ * Anime3rbSettingsDialog
+ * - لا يعتمد على androidx.preference
+ * - لديه أزرار: فتح WebView (ملء الشاشة), حذف الكوكيز, حالة الحفظ, إغلاق
+ *
+ * استدعاء العرض:
+ * Anime3rbSettingsDialog.show(fragmentManager, sharedPreferences)
+ */
 class Anime3rbSettingsDialog(
     private val sharedPref: SharedPreferences
 ) : DialogFragment() {
@@ -36,20 +42,92 @@ class Anime3rbSettingsDialog(
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
-        val fragmentContainer = FragmentContainerView(requireContext())
-        fragmentContainer.id = View.generateViewId()
-        fragmentContainer.layoutParams = ViewGroup.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        )
-        return fragmentContainer
-    }
+        // سنبني واجهة بسيطة برمجياً لتجنب أي اعتماد خارجي
+        val ctx = requireContext()
 
-    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        super.onViewCreated(view, savedInstanceState)
-        childFragmentManager.beginTransaction()
-            .replace(view.id, PrefsFragment(sharedPref))
-            .commit()
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 32, 32, 32)
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            setBackgroundColor(Color.WHITE)
+        }
+
+        val title = TextView(ctx).apply {
+            text = "إعدادات Anime3rb"
+            textSize = 20f
+            gravity = Gravity.CENTER
+            setTextColor(Color.BLACK)
+            setPadding(0, 0, 0, 24)
+        }
+        root.addView(title)
+
+        val openWebviewBtn = Button(ctx).apply {
+            text = "حل حماية Cloudflare / تسجيل الدخول"
+            setOnClickListener {
+                // افتح الـ WebView كـ DialogFragment مستقل
+                val webDialog = WebViewCaptureDialog(sharedPref) { success ->
+                    if (success) {
+                        Toast.makeText(ctx, "تم حفظ الكوكيز بنجاح!", Toast.LENGTH_SHORT).show()
+                        // لو حاب تحدث واجهة الحالة: يمكنك إعادة إنشاء الـ Dialog أو تحديث أي عرض
+                    } else {
+                        Toast.makeText(ctx, "لم يتم حفظ الكوكيز.", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                // عرض ملء الشاشة
+                webDialog.setStyle(STYLE_NORMAL, android.R.style.Theme_Material_Light_NoActionBar_Fullscreen)
+                webDialog.show(parentFragmentManager, "webview_fullscreen")
+            }
+        }
+        root.addView(openWebviewBtn)
+
+        val clearBtn = Button(ctx).apply {
+            text = "حذف الكوكيز المحفوظة"
+            setOnClickListener {
+                sharedPref.edit()
+                    .remove("anime3rb_cookie")
+                    .remove("anime3rb_ua")
+                    .apply()
+                // إزالة ملفات الكوكيز من WebView
+                val cm = CookieManager.getInstance()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    cm.removeAllCookies(null)
+                    cm.flush()
+                } else {
+                    @Suppress("DEPRECATION")
+                    cm.removeAllCookie()
+                }
+                Toast.makeText(ctx, "تم حذف البيانات.", Toast.LENGTH_SHORT).show()
+            }
+        }
+        root.addView(clearBtn)
+
+        val statusView = TextView(ctx).apply {
+            val cookie = sharedPref.getString("anime3rb_cookie", "")
+            text = if (!cookie.isNullOrEmpty()) "الحالة: الكوكيز محفوظة ✅" else "الحالة: لا توجد كوكيز محفوظة ❌"
+            setPadding(0, 16, 0, 16)
+        }
+        root.addView(statusView)
+
+        val closeBtn = Button(ctx).apply {
+            text = "إغلاق"
+            setOnClickListener { dismiss() }
+        }
+        root.addView(closeBtn)
+
+        // زر تحديث العرض (اختياري) — لو أردت تحديث الحالة بعد الإغلاق/الحفظ
+        val refreshBtn = Button(ctx).apply {
+            text = "تحديث الحالة"
+            setOnClickListener {
+                val cookie = sharedPref.getString("anime3rb_cookie", "")
+                statusView.text = if (!cookie.isNullOrEmpty()) "الحالة: الكوكيز محفوظة ✅" else "الحالة: لا توجد كوكيز محفوظة ❌"
+            }
+        }
+        root.addView(refreshBtn)
+
+        return root
     }
 
     override fun onStart() {
@@ -58,133 +136,155 @@ class Anime3rbSettingsDialog(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         )
-        dialog?.window?.setBackgroundDrawableResource(android.R.color.white)
     }
 
-    class PrefsFragment(
-        private val sharedPref: SharedPreferences
-    ) : PreferenceFragmentCompat() {
-
-        override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
-            val ctx = requireContext()
-            preferenceManager.preferenceDataStore = null
-            val screen = preferenceManager.createPreferenceScreen(ctx)
-            preferenceScreen = screen
-
-            val category = PreferenceCategory(ctx)
-            category.title = "إعدادات الحماية (Cloudflare)"
-            screen.addPreference(category)
-
-            val solvePref = Preference(ctx).apply {
-                title = "حل حماية Cloudflare / تسجيل الدخول"
-                summary = "اضغط لفتح الموقع وحل الكابتشا يدوياً."
-                setOnPreferenceClickListener {
-                    val fm = parentFragmentManager
-                    val webDialog = WebViewCaptureDialog(sharedPref) { success ->
-                        if (success) {
-                            Toast.makeText(ctx, "تم حفظ الكوكيز بنجاح!", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                    webDialog.setStyle(STYLE_NORMAL, android.R.style.Theme_Material_Light_NoActionBar_Fullscreen)
-                    webDialog.show(fm, "webview_fullscreen")
-                    true
-                }
-            }
-            category.addPreference(solvePref)
-
-            val clearPref = Preference(ctx).apply {
-                title = "حذف الكوكيز المحفوظة"
-                summary = "اضغط لحذف البيانات."
-                setOnPreferenceClickListener {
-                    sharedPref.edit()
-                        .remove("anime3rb_cookie")
-                        .remove("anime3rb_ua")
-                        .apply()
-                    CookieManager.getInstance().removeAllCookies(null)
-                    Toast.makeText(ctx, "تم حذف البيانات", Toast.LENGTH_SHORT).show()
-                    true
-                }
-            }
-            category.addPreference(clearPref)
-
-            val statusPref = Preference(ctx).apply {
-                title = "الحالة"
-                val cookie = sharedPref.getString("anime3rb_cookie", "")
-                summary = if (!cookie.isNullOrEmpty()) "الكوكيز محفوظة ✅" else "لا توجد كوكيز محفوظة ❌"
-                isEnabled = false
-            }
-            category.addPreference(statusPref)
-
-            val closePref = Preference(ctx).apply {
-                title = "إغلاق الإعدادات"
-                setOnPreferenceClickListener {
-                    (parentFragment as? DialogFragment)?.dismiss()
-                    true
-                }
-            }
-            screen.addPreference(closePref)
-        }
-    }
-
+    /**
+     * WebViewCaptureDialog
+     * - شاشة WebView كاملة لتسجيل الدخول وحفظ الكوكيز في SharedPreferences
+     * - onFinish(true) إذا تم العثور على كوكيز حماية
+     */
     class WebViewCaptureDialog(
         private val sharedPref: SharedPreferences,
         private val onFinish: (Boolean) -> Unit
     ) : DialogFragment() {
+
         private lateinit var webView: WebView
         private val userAgent = "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36"
 
         @SuppressLint("SetJavaScriptEnabled")
         override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
             val ctx = requireContext()
-            val root = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; layoutParams = ViewGroup.LayoutParams(-1, -1); setBackgroundColor(Color.WHITE) }
-            val toolbar = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; setPadding(20, 20, 20, 20); setBackgroundColor(Color.parseColor("#EEEEEE")); gravity = Gravity.CENTER_VERTICAL }
-            val closeBtn = Button(ctx).apply { text = "إغلاق"; setOnClickListener { dismiss() } }
-            val titleView = TextView(ctx).apply { text = "Anime3rb Login"; textSize = 18f; gravity = Gravity.CENTER; setTextColor(Color.BLACK); layoutParams = LinearLayout.LayoutParams(0, -2, 1f) }
-            val saveBtn = Button(ctx).apply { text = "حفظ الكوكيز"; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#FF0000")); setOnClickListener { captureAndClose() } }
-            toolbar.addView(closeBtn); toolbar.addView(titleView); toolbar.addView(saveBtn)
-            val webContainer = FrameLayout(ctx).apply { layoutParams = LinearLayout.LayoutParams(-1, 0, 1f) }
-            webView = WebView(ctx).apply { layoutParams = FrameLayout.LayoutParams(-1, -1) }
-            val settings = webView.settings
+
+            // Root vertical
+            val root = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+                setBackgroundColor(Color.WHITE)
+            }
+
+            // Toolbar بسيط
+            val toolbar = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(20, 20, 20, 20)
+                setBackgroundColor(Color.parseColor("#F5F5F5"))
+                gravity = Gravity.CENTER_VERTICAL
+            }
+
+            val closeBtn = Button(ctx).apply {
+                text = "إغلاق"
+                setOnClickListener { dismiss() }
+            }
+            toolbar.addView(closeBtn)
+
+            val titleView = TextView(ctx).apply {
+                text = "Anime3rb Login"
+                textSize = 18f
+                gravity = Gravity.CENTER
+                setTextColor(Color.BLACK)
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                layoutParams = lp
+            }
+            toolbar.addView(titleView)
+
+            val saveBtn = Button(ctx).apply {
+                text = "حفظ الكوكيز"
+                setOnClickListener { captureAndClose() }
+            }
+            toolbar.addView(saveBtn)
+
+            // Container لـ WebView
+            val webContainer = FrameLayout(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f
+                )
+            }
+
+            webView = WebView(ctx).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            }
+
+            val settings: WebSettings = webView.settings
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.userAgentString = userAgent
             settings.cacheMode = WebSettings.LOAD_DEFAULT
-            CookieManager.getInstance().setAcceptCookie(true)
-            CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
-            webView.webViewClient = object : WebViewClient() { override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?) = false }
-            webView.loadUrl("https://www.anime3rb.com")
-            webContainer.addView(webView); root.addView(toolbar); root.addView(webContainer)
+
+            // السماح بالكوكيز
+            val cm = CookieManager.getInstance()
+            cm.setAcceptCookie(true)
+            try {
+                cm.setAcceptThirdPartyCookies(webView, true)
+            } catch (t: Throwable) {
+                // بعض البيئات لا تدعم هذه الدالة
+            }
+
+            webView.webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?) = false
+            }
+
+            webView.loadUrl("https://www.anime3rb.com") // أو أي رابط تريده
+
+            webContainer.addView(webView)
+            root.addView(toolbar)
+            root.addView(webContainer)
+
             return root
         }
 
         override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
             val dialog = super.onCreateDialog(savedInstanceState)
-            dialog.setOnKeyListener { _, keyCode, event -> if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP && ::webView.isInitialized && webView.canGoBack()) { webView.goBack(); true } else false }
+            // التعامل مع زر العودة داخل WebView
+            dialog.setOnKeyListener { _, keyCode, event ->
+                if (keyCode == KeyEvent.KEYCODE_BACK &&
+                    event.action == KeyEvent.ACTION_UP &&
+                    ::webView.isInitialized &&
+                    webView.canGoBack()
+                ) {
+                    webView.goBack()
+                    true
+                } else false
+            }
             return dialog
         }
 
         private fun captureAndClose() {
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) CookieManager.getInstance().flush()
+                val cm = CookieManager.getInstance()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) cm.flush()
+
                 val url = webView.url ?: "https://www.anime3rb.com"
-                val cookieStr = CookieManager.getInstance().getCookie(url) ?: ""
+                val cookieStr = cm.getCookie(url) ?: ""
+
+                // تحقق من وجود أي من كوكيز الحماية الشهيرة
                 if (cookieStr.contains("cf_clearance") || cookieStr.contains("laravel_session") || cookieStr.contains("XSRF-TOKEN")) {
-                    val editor = sharedPref.edit()
-                    editor.putString("anime3rb_cookie", cookieStr)
-                    editor.putString("anime3rb_ua", userAgent)
-                    editor.apply()
+                    sharedPref.edit()
+                        .putString("anime3rb_cookie", cookieStr)
+                        .putString("anime3rb_ua", webView.settings.userAgentString ?: "")
+                        .apply()
                     onFinish(true)
                     dismiss()
                 } else {
                     Toast.makeText(context, "لم يتم العثور على كوكيز الحماية بعد.", Toast.LENGTH_LONG).show()
+                    onFinish(false)
                 }
             } catch (e: Exception) {
-                Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "خطأ: ${e.message}", Toast.LENGTH_SHORT).show()
+                onFinish(false)
             }
         }
     }
 
     companion object {
-        fun show(fm: FragmentManager, sp: SharedPreferences) = Anime3rbSettingsDialog(sp).show(fm, "anime3rb_settings")
+        fun show(fm: FragmentManager, sp: SharedPreferences) {
+            Anime3rbSettingsDialog(sp).show(fm, "anime3rb_settings")
+        }
     }
 }
