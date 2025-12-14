@@ -1,44 +1,55 @@
 package com.anime3rb
 
+import android.app.Activity
+import android.app.Dialog
+import android.content.Context
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.ViewGroup
+import android.view.Window
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import com.lagradost.cloudstream3.AcraApplication
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.lang.ref.WeakReference
 import java.net.URLEncoder
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
-import com.lagradost.cloudstream3.AcraApplication.Companion.setKey
-import com.lagradost.cloudstream3.AcraApplication.Companion.getKey
 
-// إزالة sharedPref من الـ constructor لأنه غير مدعوم في CloudStream Plugin system
 class Anime3rb : MainAPI() {
     override var mainUrl = "https://anime3rb.com"
-    override var name = "Anime3rb"
+    override var name = "Anim3rb2"
     override val hasMainPage = true
     override var lang = "ar"
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie, TvType.OVA)
 
     companion object {
+        var activityContext: WeakReference<Context>? = null
+
+        // متغيرات ثابتة لحفظ الجلسة طوال فترة تشغيل التطبيق
+        private var savedCookies: String = ""
         private const val TAG = "Anime3rb_Log"
+
         private val NON_DIGITS = Regex("[^0-9]")
         private val TITLE_EP_REGEX = Regex("الحلقة \\d+")
-        // مفتاح حفظ الكوكيز في dataStore الخاص بالإضافة
-        private const val COOKIE_KEY = "anime3rb_cookie_v2"
-    }
 
-    private val USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+        // يجب استخدام User-Agent ثابت وموحد للطرفين
+        private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+    }
 
     private fun toAbsoluteUrl(url: String): String {
         return when {
@@ -49,174 +60,272 @@ class Anime3rb : MainAPI() {
         }
     }
 
-    // دالة لفتح WebView مخفي وجلب الكوكيز الجديد بعد حل الكابتشا
-    private suspend fun openWebViewFor(url: String): String? {
-        Log.d(TAG, "⚡ Launching Background WebView for: $url")
-        return suspendCoroutine { continuation ->
-            Handler(Looper.getMainLooper()).post {
-                var isResumed = false
-                var webView: WebView? = null
+    // --- أدوات التصميم ---
+    private fun dp(value: Int, context: Context): Int {
+        return TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            value.toFloat(),
+            context.resources.displayMetrics
+        ).toInt()
+    }
 
-                try {
-                    // الحصول على Context التطبيق بأمان
-                    val context = AcraApplication.context
-                    if (context == null) {
-                        if (continuation.context.isActive) continuation.resume(null)
-                        return@post
-                    }
-
-                    webView = WebView(context)
-                    webView.settings.apply {
-                        javaScriptEnabled = true
-                        domStorageEnabled = true
-                        userAgentString = USER_AGENT
-                        cacheMode = WebSettings.LOAD_DEFAULT
-                        databaseEnabled = true
-                        blockNetworkImage = false // أحياناً الصور ضرورية للكابتشا
-                        loadsImagesAutomatically = true
-                    }
-
-                    val cookieManager = CookieManager.getInstance()
-                    cookieManager.setAcceptCookie(true)
-                    cookieManager.setAcceptThirdPartyCookies(webView, true)
-
-                    webView.webViewClient = object : WebViewClient() {
-                        override fun onPageFinished(view: WebView?, url: String?) {
-                            super.onPageFinished(view, url)
-                            val cookies = cookieManager.getCookie(url) ?: ""
-
-                            // نتحقق من وجود كوكيز مهمة تدل على النجاح
-                            // cf_clearance = تجاوز كلاودفلير
-                            // laravel_session / XSRF-TOKEN = كوكيز الموقع نفسه
-                            if (cookies.contains("cf_clearance") || cookies.contains("laravel_session") || cookies.contains("XSRF-TOKEN")) {
-                                if (!isResumed) {
-                                    isResumed = true
-                                    Log.d(TAG, "✅ WebView Success! Returning Cookies.")
-
-                                    // حفظ في النظام
-                                    cookieManager.flush()
-                                    // حفظ في بيانات الإضافة
-                                    setKey(COOKIE_KEY, cookies)
-
-                                    // تنظيف الويب فيو بعد قليل
-                                    Handler(Looper.getMainLooper()).postDelayed({
-                                        try { webView?.destroy() } catch (e: Exception) {}
-                                    }, 2000)
-
-                                    if (continuation.context.isActive) continuation.resume(cookies)
-                                }
-                            }
-                        }
-                    }
-
-                    Log.d(TAG, "WebView Loading: $url")
-                    webView.loadUrl(url)
-
-                    // Timeout بعد 25 ثانية
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        if (!isResumed) {
-                            Log.w(TAG, "❌ WebView Timeout")
-                            isResumed = true
-                            try { webView?.destroy() } catch (e: Exception) {}
-                            if (continuation.context.isActive) continuation.resume(null)
-                        }
-                    }, 25000)
-
-                } catch (e: Exception) {
-                    Log.e(TAG, "WebView Crash: ${e.message}")
-                    if (!isResumed && continuation.context.isActive) {
-                        try { continuation.resume(null) } catch(e: Exception){}
-                    }
-                }
-            }
+    private fun createRoundedBackground(color: Int, radius: Float): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = radius
         }
     }
 
-    private fun getHeaders(cookies: String): Map<String, String> {
-        return mapOf(
-            "User-Agent" to USER_AGENT,
-            "Cookie" to cookies,
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Referer" to "$mainUrl/",
-            "Upgrade-Insecure-Requests" to "1"
-        )
-    }
+    // --- المنطق الذكي ---
 
-    private fun isChallenge(text: String): Boolean {
-        // كلمات تدل على وجود حماية
-        return text.contains("just a moment", ignoreCase = true) ||
-                text.contains("cloudflare", ignoreCase = true) ||
-                text.contains("verify you are human", ignoreCase = true) ||
-                text.contains("attention required", ignoreCase = true)
-    }
-
-    // --- المحرك الرئيسي للطلبات ---
-    private suspend fun request(urlInput: String): Document {
-        val url = toAbsoluteUrl(urlInput)
-        Log.d(TAG, "🌐 Requesting: $url")
-
-        // 1. محاولة استخدام الكوكيز المحفوظة
-        var currentCookies = getKey<String>(COOKIE_KEY) ?: ""
-
-        if (currentCookies.isBlank()) {
-            currentCookies = CookieManager.getInstance().getCookie(url) ?: ""
-        }
-
-        if (currentCookies.isNotBlank()) {
+    /**
+     * يحاول جلب الصفحة بصمت أولاً باستخدام الكوكيز المحفوظة.
+     * إذا اكتشف حماية، يفتح النافذة، يحلها، يحفظ الكوكيز الجديدة، ثم يعيد المحاولة.
+     */
+    private suspend fun getDocumentSmart(url: String): Document? {
+        // 1. محاولة صامتة أولى
+        if (savedCookies.isNotEmpty()) {
             try {
-                // نجرب الطلب بالكوكيز القديمة
-                val response = app.get(url, headers = getHeaders(currentCookies))
-                if (response.code == 200 && !isChallenge(response.text)) {
-                    return response.document
+                val headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Cookie" to savedCookies,
+                    "Referer" to "$mainUrl/"
+                )
+                val response = app.get(url, headers = headers)
+
+                if (response.code == 200 && !isCloudflareChallenge(response.text)) {
+                    // نجحنا بالكوكيز القديمة
+                    return Jsoup.parse(response.text)
                 } else {
                     Log.w(TAG, "⚠️ Saved cookies expired or challenged.")
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "⚠️ Request failed: ${e.message}")
+                Log.w(TAG, "⚠️ Silent request failed: ${e.message}")
             }
         }
 
-        // 2. إذا فشلنا، نفتح WebView للحصول على كوكيز جديدة
-        val newCookies = openWebViewFor(url)
+        // 2. إذا فشلنا (أو لا توجد كوكيز)، نفتح النافذة
+        val docFromDialog = openCaptchaDialog(url)
 
-        if (newCookies != null) {
-            Log.d(TAG, "🔄 Retrying with NEW WebView cookies...")
-            val response = app.get(url, headers = getHeaders(newCookies))
-            if (!isChallenge(response.text)) return response.document
+        // إذا نجح الحل، تم تحديث savedCookies تلقائياً داخل الدالة
+        return docFromDialog
+    }
+
+    private fun isCloudflareChallenge(html: String): Boolean {
+        return html.contains("Just a moment") ||
+                html.contains("لحظة…") ||
+                html.contains("challenge-platform") ||
+                html.contains("cf-turnstile")
+    }
+
+    /**
+     * تفتح نافذة منبثقة (Dialog).
+     */
+    private suspend fun openCaptchaDialog(url: String): Document? {
+        Log.d(TAG, "⚡ Asking user to solve Cloudflare for: $url")
+
+        return suspendCoroutine { continuation ->
+            Handler(Looper.getMainLooper()).post {
+                val context = activityContext?.get()
+                val activity = context as? Activity
+
+                if (activity == null || activity.isFinishing) {
+                    continuation.resume(null)
+                    return@post
+                }
+
+                val dialog = Dialog(activity)
+                dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+                dialog.setCancelable(false)
+
+                // التصميم العام
+                val rootLayout = LinearLayout(activity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(10, activity), dp(10, activity), dp(10, activity), dp(10, activity))
+                    background = createRoundedBackground(Color.parseColor("#1a1a2e"), dp(16, activity).toFloat())
+                }
+
+                // العنوان
+                val titleView = TextView(activity).apply {
+                    text = "مطلوب التحقق (Cloudflare)"
+                    setTextColor(Color.WHITE)
+                    textSize = 16f
+                    gravity = Gravity.CENTER
+                    setPadding(0, 0, 0, dp(5, activity))
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                }
+                rootLayout.addView(titleView)
+
+                // حاوية الويب
+                val webContainer = FrameLayout(activity).apply {
+                    background = createRoundedBackground(Color.WHITE, dp(12, activity).toFloat())
+                    clipToOutline = true
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        0,
+                        1f
+                    ).apply {
+                        setMargins(0, dp(5, activity), 0, dp(10, activity))
+                    }
+                }
+
+                val webView = WebView(activity)
+                webView.layoutParams = FrameLayout.LayoutParams(-1, -1)
+
+                webView.settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    databaseEnabled = true
+                    // مهم جداً: نفس الـ UserAgent المستخدم في الطلبات الخلفية
+                    userAgentString = USER_AGENT
+                    useWideViewPort = true
+                    loadWithOverviewMode = true
+                    cacheMode = WebSettings.LOAD_DEFAULT
+                }
+
+                val cookieManager = CookieManager.getInstance()
+                cookieManager.setAcceptCookie(true)
+                cookieManager.setAcceptThirdPartyCookies(webView, true)
+
+                var isSolved = false
+
+                fun onSuccess(html: String) {
+                    if (!isSolved) {
+                        isSolved = true
+
+                        // *** أهم خطوة: حفظ الكوكيز والـ UserAgent ***
+                        cookieManager.flush()
+                        val newCookies = cookieManager.getCookie(url)
+                        if (newCookies != null) {
+                            savedCookies = newCookies
+                            Log.d(TAG, "✅ Cookies Updated: $savedCookies")
+                        }
+
+                        try { dialog.dismiss() } catch (e: Exception) {}
+
+                        // تنظيف الـ HTML
+                        var cleanHtml = html
+                        if (cleanHtml.startsWith("\"") && cleanHtml.endsWith("\"")) {
+                            cleanHtml = cleanHtml.substring(1, cleanHtml.length - 1)
+                        }
+                        cleanHtml = cleanHtml.replace("\\u003C", "<")
+                            .replace("\\u003E", ">")
+                            .replace("\\\"", "\"")
+                            .replace("\\n", "\n")
+                            .replace("\\t", "\t")
+                            .replace("\\\\", "\\")
+
+                        continuation.resume(Jsoup.parse(cleanHtml))
+                    }
+                }
+
+                fun checkPage() {
+                    if (isSolved) return
+                    val jsCheck = """
+                        (function() {
+                            var bodyText = document.body.innerText;
+                            var html = document.documentElement.innerHTML;
+                            if (!bodyText.includes('Just a moment') && 
+                                !bodyText.includes('لحظة…') && 
+                                !html.includes('challenge-platform')) {
+                                
+                                if (document.querySelector('.video-card') || 
+                                    document.querySelector('.simple-title-card') || 
+                                    document.querySelector('.main-content') ||
+                                    document.querySelector('h1')) {
+                                    return document.documentElement.outerHTML;
+                                }
+                            }
+                            return null;
+                        })();
+                    """
+                    webView.evaluateJavascript(jsCheck) { result ->
+                        if (result != null && result != "null" && result.length > 50) {
+                            titleView.text = "✅ تم الحل! حفظ الجلسة..."
+                            titleView.setTextColor(Color.GREEN)
+                            Handler(Looper.getMainLooper()).postDelayed({ onSuccess(result) }, 500)
+                        } else {
+                            if(dialog.isShowing) {
+                                Handler(Looper.getMainLooper()).postDelayed({ checkPage() }, 1000)
+                            }
+                        }
+                    }
+                }
+
+                webView.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        super.onPageFinished(view, url)
+                        checkPage()
+                    }
+                }
+
+                webContainer.addView(webView)
+                rootLayout.addView(webContainer)
+
+                // زر الإغلاق
+                val closeButton = TextView(activity).apply {
+                    text = "إلغاء"
+                    setTextColor(Color.WHITE)
+                    gravity = Gravity.CENTER
+                    textSize = 14f
+                    setPadding(dp(20, activity), dp(8, activity), dp(20, activity), dp(8, activity))
+                    background = createRoundedBackground(Color.parseColor("#ff4757"), dp(20, activity).toFloat())
+                    setOnClickListener {
+                        dialog.dismiss()
+                    }
+                }
+
+                val buttonContainer = LinearLayout(activity).apply {
+                    gravity = Gravity.CENTER
+                    addView(closeButton)
+                }
+                rootLayout.addView(buttonContainer)
+
+                dialog.setContentView(rootLayout)
+                dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+
+                // تصغير النافذة قليلاً
+                val width = (activity.resources.displayMetrics.widthPixels * 0.85).toInt()
+                val height = (activity.resources.displayMetrics.heightPixels * 0.70).toInt()
+                dialog.window?.setLayout(width, height)
+
+                dialog.setOnDismissListener {
+                    try { webView.destroy() } catch(e: Exception){}
+                    if (!isSolved) {
+                        isSolved = true
+                        continuation.resume(null)
+                    }
+                }
+
+                webView.loadUrl(url)
+                dialog.show()
+            }
         }
-
-        throw ErrorLoadingException("فشل فتح الرابط. يرجى الانتظار قليلاً أو المحاولة لاحقاً.")
     }
 
     // =========================================================================
     // 1. الصفحة الرئيسية
     // =========================================================================
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        // نستخدم دالة request الخاصة بنا بدلاً من app.get
-        val doc = try {
-            request(request.data)
-        } catch (e: Exception) {
-            return null
-        }
-
+        val doc = getDocumentSmart(request.data) ?: return null
         val homeSets = mutableListOf<HomePageList>()
 
         try {
             doc.select("h2:contains(الأنميات المثبتة)").firstOrNull()?.let { header ->
-                val pinnedList = header.parent()?.parent()?.parent()
+                val list = header.parent()?.parent()?.parent()
                     ?.select(".glide__slide:not(.glide__slide--clone) a.video-card")
                     ?.mapNotNull { toSearchResult(it) }
-                if (!pinnedList.isNullOrEmpty()) homeSets.add(HomePageList("الأنميات المثبتة", pinnedList))
+                if (!list.isNullOrEmpty()) homeSets.add(HomePageList("الأنميات المثبتة", list))
             }
 
-            val latestEpisodesList = doc.select("#videos a.video-card").mapNotNull { toSearchResult(it) }
-            if (latestEpisodesList.isNotEmpty()) homeSets.add(HomePageList("أحدث الحلقات", latestEpisodesList))
+            val latest = doc.select("#videos a.video-card").mapNotNull { toSearchResult(it) }
+            if (latest.isNotEmpty()) homeSets.add(HomePageList("أحدث الحلقات", latest))
 
             doc.select("h3:contains(آخر الأنميات المضافة)").firstOrNull()?.let { header ->
-                val addedList = header.parent()?.parent()?.parent()
+                val list = header.parent()?.parent()?.parent()
                     ?.select(".glide__slide:not(.glide__slide--clone) a.video-card")
                     ?.mapNotNull { toSearchResult(it) }
-                if (!addedList.isNullOrEmpty()) homeSets.add(HomePageList("آخر الأنميات المضافة", addedList))
+                if (!list.isNullOrEmpty()) homeSets.add(HomePageList("آخر الأنميات المضافة", list))
             }
 
         } catch (e: Exception) {
@@ -225,15 +334,12 @@ class Anime3rb : MainAPI() {
         return newHomePageResponse(homeSets)
     }
 
-    override val mainPage = mainPageOf(
-        "$mainUrl/" to "الرئيسية"
-    )
+    override val mainPage = mainPageOf("$mainUrl/" to "الرئيسية")
 
     private fun toSearchResult(element: Element): SearchResponse? {
         return try {
             val title = element.select("h3.title-name").text().trim()
-            val rawHref = element.attr("href")
-            val href = toAbsoluteUrl(rawHref)
+            val href = toAbsoluteUrl(element.attr("href"))
             val posterUrl = element.select("img").attr("src")
             val episodeText = element.select("p.number").text().trim()
             val episodeNum = episodeText.filter { it.isDigit() }.toIntOrNull()
@@ -242,9 +348,7 @@ class Anime3rb : MainAPI() {
                 this.posterUrl = posterUrl
                 addDubStatus(false, episodeNum)
             }
-        } catch (e: Exception) {
-            null
-        }
+        } catch (e: Exception) { null }
     }
 
     // =========================================================================
@@ -253,70 +357,75 @@ class Anime3rb : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val encodedQuery = URLEncoder.encode(query, "UTF-8").replace("%20", "+")
         val url = "$mainUrl/search?q=$encodedQuery"
-        val doc = request(url)
 
-        return doc.select("a.simple-title-card").mapNotNull {
-            val title = it.select("h4.text-lg").text().trim()
-            val rawHref = it.attr("href")
-            val href = toAbsoluteUrl(rawHref)
+        val doc = getDocumentSmart(url) ?: return emptyList()
+
+        val results = doc.select("a.simple-title-card, a.video-card").mapNotNull {
+            val title = it.select("h4.text-lg, h3.title-name").text().trim()
+            val href = toAbsoluteUrl(it.attr("href"))
             val posterUrl = it.select("img").attr("src")
 
-            newAnimeSearchResponse(title, href, TvType.Anime) {
+            if (title.isBlank() || href == mainUrl) return@mapNotNull null
+
+            val typeText = it.select("div.details span.badge").text()
+            val type = if (typeText.contains("Movie") || title.contains("Film")) TvType.AnimeMovie else TvType.Anime
+
+            newAnimeSearchResponse(title, href, type) {
                 this.posterUrl = posterUrl
             }
         }
+
+        return results
     }
 
     // =========================================================================
-    // 3. تحميل التفاصيل
+    // 3. التحميل (Load)
     // =========================================================================
     override suspend fun load(url: String): LoadResponse? {
         val fullUrl = toAbsoluteUrl(url)
-        val doc = request(fullUrl)
+        val doc = getDocumentSmart(fullUrl) ?: return null
 
-        return withContext(Dispatchers.Default) {
-            try {
-                val rawTitle = doc.selectFirst("h1")?.text() ?: ""
-                val title = TITLE_EP_REGEX.replace(rawTitle, "").trim()
-                val poster = doc.selectFirst("img[alt*='بوستر']")?.attr("src") ?: ""
-                val desc = doc.selectFirst("p.synopsis")?.text() ?: ""
+        return try {
+            val rawTitle = doc.selectFirst("h1")?.text() ?: ""
+            val title = TITLE_EP_REGEX.replace(rawTitle, "").trim()
+            val poster = doc.selectFirst("img[alt*='بوستر']")?.attr("src") ?: ""
+            val desc = doc.selectFirst("p.synopsis")?.text() ?: ""
 
-                val elements = doc.select(".videos-list a")
-                val episodes = ArrayList<Episode>(elements.size)
+            val elements = doc.select(".videos-list a")
+            val episodes = ArrayList<Episode>(elements.size)
 
-                for (i in elements.size - 1 downTo 0) {
-                    val element = elements[i]
-                    val rawHref = element.attr("href")
-                    if (rawHref.isNullOrEmpty()) continue
+            for (i in elements.size - 1 downTo 0) {
+                val element = elements[i]
+                val rawHref = element.attr("href")
+                if (rawHref.isNullOrEmpty()) continue
 
-                    val href = toAbsoluteUrl(rawHref)
-                    val videoData = element.selectFirst(".video-data")
-                    val epText = videoData?.child(0)?.text() ?: ""
-                    val epNum = NON_DIGITS.replace(epText, "").toIntOrNull()
-                    val epName = videoData?.child(1)?.text().orEmpty()
-                    val imgAttr = element.selectFirst("img")?.attr("src").orEmpty()
+                val href = toAbsoluteUrl(rawHref)
+                val videoData = element.selectFirst(".video-data")
+                val epText = videoData?.child(0)?.text() ?: ""
+                val epNum = NON_DIGITS.replace(epText, "").toIntOrNull()
+                val epName = videoData?.child(1)?.text().orEmpty()
+                val imgAttr = element.selectFirst("img")?.attr("src").orEmpty()
 
-                    episodes.add(
-                        newEpisode(href) {
-                            name = if (epName.isNotBlank()) epName else epText
-                            episode = epNum
-                            posterUrl = imgAttr
-                        }
-                    )
-                }
-                newTvSeriesLoadResponse(title, fullUrl, TvType.Anime, episodes) {
-                    this.posterUrl = poster
-                    this.plot = desc
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Load Error: ${e.message}")
-                null
+                episodes.add(
+                    newEpisode(href) {
+                        name = if (epName.isNotBlank()) epName else epText
+                        episode = epNum
+                        posterUrl = imgAttr
+                    }
+                )
             }
+            newTvSeriesLoadResponse(title, fullUrl, TvType.Anime, episodes) {
+                this.posterUrl = poster
+                this.plot = desc
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Load Error: ${e.message}")
+            null
         }
     }
 
     // =========================================================================
-    // 4. الروابط
+    // 4. استخراج الروابط
     // =========================================================================
     override suspend fun loadLinks(
         data: String,
@@ -324,45 +433,55 @@ class Anime3rb : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        val fullUrl = toAbsoluteUrl(data)
+        // نحاول جلب صفحة المشغل بصمت
+        val doc = getDocumentSmart(fullUrl) ?: return false
+        val htmlText = doc.html()
+
+        val playerPattern = """https?:(?:\\/|/){2}video\.vid3rb\.com(?:\\/|/)player(?:\\/|/)[^"']+""".toRegex()
+        val match = playerPattern.find(htmlText) ?: return false
+
+        var playerUrl = match.value
+            .replace("\\", "")
+            .replace("&amp;", "&")
+            .replace("\\u0026", "&")
+            .substringBefore("&quot;")
+            .substringBefore("\"")
+
+        playerUrl = toAbsoluteUrl(playerUrl)
+        Log.d(TAG, "✅ Found Player URL: $playerUrl")
+
         return try {
-            val fullUrl = toAbsoluteUrl(data)
-            val doc = request(fullUrl)
-            val htmlText = doc.html()
+            // نستخدم الكوكيز المحفوظة
+            val headers = mapOf(
+                "Host" to "video.vid3rb.com",
+                "User-Agent" to USER_AGENT,
+                "Referer" to "$mainUrl/",
+                "Cookie" to savedCookies, // استخدام الكوكيز المحفوظة
+                "Sec-Fetch-Dest" to "iframe",
+                "Sec-Fetch-Site" to "cross-site"
+            )
 
-            // نمط يلتقط رابط المشغل
-            val playerPattern = """https?:(?:\\/|/){2}video\.vid3rb\.com(?:\\/|/)player(?:\\/|/)[^"']+""".toRegex()
-            val match = playerPattern.find(htmlText) ?: return false
+            val playerResponseText = app.get(playerUrl, headers = headers).text
 
-            var playerUrl = match.value
-                .replace("\\", "")
-                .replace("&amp;", "&")
-                .replace("\\u0026", "&")
-
-            playerUrl = toAbsoluteUrl(playerUrl)
-
-            // طلب صفحة المشغل (أيضاً عبر request لضمان المرور)
-            val playerDoc = request(playerUrl)
-            val playerRespText = playerDoc.html()
-
-            // استخراج JSON المصادر من داخل كود المشغل
             val jsonPattern = """var\s+video_sources\s*=\s*(\[.*?\]);""".toRegex(RegexOption.DOT_MATCHES_ALL)
-            val matches = jsonPattern.findAll(playerRespText)
+            val jsonMatch = jsonPattern.find(playerResponseText)
+            var linksFound = false
 
-            var success = false
-            val foundLinks = mutableSetOf<String>()
-
-            for (m in matches) {
-                val jsonStr = m.groupValues[1]
+            if (jsonMatch != null) {
                 try {
+                    val jsonStr = jsonMatch.groupValues[1]
                     val videoList = parseJson<List<Map<String, Any?>>>(jsonStr)
+                    val foundUrls = mutableSetOf<String>()
+
                     for (item in videoList) {
                         val src = item["src"]?.toString() ?: continue
                         val label = item["label"]?.toString() ?: "Unknown"
                         val premium = item["premium"]?.toString() == "true"
                         if (premium) continue
 
-                        val cleanLink = src.replace("\\", "").replace("&amp;", "&").replace("\\u0026", "&")
-                        if (!foundLinks.add(cleanLink)) continue
+                        val cleanLink = src.replace("\\", "")
+                        if (!foundUrls.add(cleanLink)) continue
 
                         callback.invoke(
                             newExtractorLink(
@@ -374,14 +493,44 @@ class Anime3rb : MainAPI() {
                                 quality = getQualityFromName(label)
                             }
                         )
-                        success = true
+                        linksFound = true
                     }
-                } catch (_: Exception) {}
+                } catch (e: Exception) { Log.e(TAG, "JSON parse error: $e") }
             }
-            success
+
+            if (!linksFound) {
+                val videoPattern = """https:(?:\\/|/){2}video\.vid3rb\.com(?:\\/|/)video(?:\\/|/)[^"'\s<>]+""".toRegex()
+                val videoMatches = videoPattern.findAll(playerResponseText)
+                val foundUrls = mutableSetOf<String>()
+
+                videoMatches.forEach { m ->
+                    val cleanLink = m.value.replace("\\", "").replace("&amp;", "&")
+                    if (foundUrls.add(cleanLink)) {
+                        val quality = getQualityInt(cleanLink)
+                        callback.invoke(
+                            newExtractorLink(
+                                source = "Anime3rb",
+                                name = "Anime3rb $quality",
+                                url = cleanLink,
+                            ) {
+                                referer = "https://video.vid3rb.com/"
+                            }
+                        )
+                        linksFound = true
+                    }
+                }
+            }
+
+            linksFound
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error extracting links via HTTP: ${e.message}")
             false
         }
+    }
+
+    private fun getQualityInt(url: String): Int {
+        val match = Regex("""(\d{3,4})p""", RegexOption.IGNORE_CASE).find(url)
+            ?: Regex("""(\d{3,4})""").find(url)
+        return match?.value?.toIntOrNull() ?: Qualities.Unknown.value
     }
 }
