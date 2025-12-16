@@ -1,3 +1,4 @@
+
 package com.cimatn
 
 import com.fasterxml.jackson.annotation.JsonProperty
@@ -26,12 +27,7 @@ class CimaTn : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page == 1) {
-            request.data
-        } else {
-            "${request.data}?max-results=20"
-        }
-
+        val url = if (page == 1) request.data else "${request.data}?max-results=20"
         val doc = app.get(url).document
         val home = doc.select("#holder a.itempost").mapNotNull { toSearchResult(it) }
         return newHomePageResponse(request.name, home)
@@ -41,11 +37,7 @@ class CimaTn : MainAPI() {
         val title = element.select("#item-name").text().trim()
         val url = element.attr("href")
         var posterUrl = element.select("img").attr("src")
-        
-        posterUrl = posterUrl.replace(Regex("/s\\d+-c/"), "/w600/")
-                             .replace(Regex("/w\\d+/"), "/w600/")
-                             .replace(Regex("/s\\d+/"), "/s1600/")
-
+        posterUrl = fixPoster(posterUrl)
         val year = element.select(".entry-label").text().trim().toIntOrNull()
 
         return newMovieSearchResponse(title, url, TvType.Movie) {
@@ -60,22 +52,17 @@ class CimaTn : MainAPI() {
         return doc.select("#holder a.itempost").mapNotNull { toSearchResult(it) }
     }
 
-    
-  
-// =========================================================================
-    // دالة Load مع سجلات تتبع (Logging) وطباعة HTML عند الفشل
+    // =========================================================================
+    // دالة Load المحدثة
     // =========================================================================
     override suspend fun load(url: String): LoadResponse {
         debugLog("🔵 Load Function Started: $url")
         val cleanUrl = url.substringBefore("?")
 
-        // -----------------------------------------------------------
         // 1. منطق الأفلام
-        // -----------------------------------------------------------
         if (cleanUrl.contains("film-")) {
             debugLog("🎬 Type: MOVIE detected")
             
-            // استبدال الدومين
             val watchUrl = cleanUrl.replace("www.cimatn.com", "cimatunisa.blogspot.com")
             debugLog("✅ Redirecting to: $watchUrl")
 
@@ -96,12 +83,9 @@ class CimaTn : MainAPI() {
             }
         }
 
-        // -----------------------------------------------------------
         // 2. منطق المسلسلات
-        // -----------------------------------------------------------
         debugLog("📺 Type: SERIES detected")
         
-        // جلب الصفحة الرئيسية للمسلسل
         val response = app.get(cleanUrl)
         val htmlContent = response.text
         val doc = response.document
@@ -162,7 +146,6 @@ class CimaTn : MainAPI() {
             val seasonNum = index + 1
             debugLog("--------------------------------------------------")
             debugLog("🔄 Processing Season $seasonNum: $sTitle")
-            debugLog("🔗 Link: $sLink")
             
             // جلب محتوى صفحة الموسم
             val seasonHtml = if (sLink == cleanUrl) htmlContent else app.get(sLink).text
@@ -176,15 +159,11 @@ class CimaTn : MainAPI() {
             } else {
                 debugLog("❌ FAILED to find episodes in Season $seasonNum")
                 
-                // ========================================================
-                // طباعة محتوى الصفحة عند الفشل لتحليل المشكلة
-                // ========================================================
-                debugLog("⚠️ DUMPING HTML CONTENT FOR ANALYSIS:")
-                printLargeLog(seasonHtml)
-                debugLog("⚠️ END OF HTML DUMP")
+                // طباعة HTML للتحليل إذا لزم الأمر
+                // printLargeLog(seasonHtml) 
                 
-                // محاولة أخيرة بالبحث (Fallback)
-                if (seasonsList.size == 1) { // فقط للموسم الواحد لتجنب التكرار
+                // محاولة أخيرة بالبحث (Fallback) فقط إذا كان موسماً واحداً
+                if (seasonsList.size == 1) { 
                     debugLog("Trying Feed Search Fallback...")
                     val slug = sLink.substringAfterLast("/").substringBefore(".").replace("_9", "")
                     eps = getEpisodesFromSearchFeed(slug, seasonNum)
@@ -205,7 +184,7 @@ class CimaTn : MainAPI() {
     }
 
     // ========================================================
-    // دالة استخراج الحلقات
+    // دالة استخراج الحلقات (مجمعة)
     // ========================================================
     private fun getEpisodesDirect(htmlContent: String, pageUrl: String, seasonNum: Int): List<Episode> {
         val episodes = mutableListOf<Episode>()
@@ -235,22 +214,20 @@ class CimaTn : MainAPI() {
                 })
             }
             return episodes
-        } else {
-            debugLog("   -> No JS config found (totalEpisodes/baseLink)")
         }
 
         // 2. فحص روابط HTML
         val doc = org.jsoup.Jsoup.parse(htmlContent)
         
-        // قائمة بالمحددات المحتملة (CSS Selectors)
+        // قائمة بالمحددات المحتملة
         val selectors = listOf(
-            ".allepcont .row a",          // التصميم الجديد
-            ".EpisodesList a",            // التصميم القديم (قائمة جانبية)
-            "#EpisodesList a",            // احتمال ID
-            ".episodes-container a",      // احتمال
-            "div[class*='Episodes'] a",   // بحث عام عن كلاس يحتوي Episodes
-            ".post-body a[href*='-ep-']", // بحث داخل المقال عن روابط حلقات
-            ".post-body a[href*='hal9a']" // بحث عن "حلقة"
+            ".allepcont .row a",          
+            ".EpisodesList a",            
+            "#EpisodesList a",            
+            ".episodes-container a",
+            "div[class*='Episodes'] a",
+            ".post-body a[href*='-ep-']",
+            ".post-body a[href*='hal9a']"
         )
 
         for (selector in selectors) {
@@ -262,14 +239,13 @@ class CimaTn : MainAPI() {
                     val epName = link.select("h2").text().trim()
                         .ifEmpty { link.text().trim() }
                         .ifEmpty { "Episode" }
+                    
                     val epUrl = link.attr("href")
                     
                     // استخراج رقم الحلقة
                     val epNum = Regex("""(\d+)""").findAll(epName).lastOrNull()?.value?.toIntOrNull()
 
-                    // شروط القبول: الرابط غير فارغ، ليس الصفحة الحالية، ليس رابط هاش
                     if (epUrl.isNotEmpty() && epUrl != pageUrl && !epUrl.contains("#")) {
-                         // شرط إضافي: التأكد أنه رابط تدوينة (ينتهي بـ .html)
                          if (epUrl.contains(".html")) {
                              episodes.add(newEpisode(epUrl) {
                                  this.name = epName
@@ -280,7 +256,7 @@ class CimaTn : MainAPI() {
                     }
                 }
                 
-                if (episodes.isNotEmpty()) break // وجدنا حلقات، نتوقف عن تجربة المحددات الأخرى
+                if (episodes.isNotEmpty()) break 
             }
         }
         
@@ -314,46 +290,21 @@ class CimaTn : MainAPI() {
     }
 
     // ========================================================
-    // دالة لطباعة النصوص الطويلة في Logcat
+    // دالة loadLinks
     // ========================================================
-    private fun printLargeLog(content: String) {
-        if (content.length > 4000) {
-            println("CimaTnDebug: HTML DUMP PART 1:")
-            println(content.substring(0, 4000))
-            printLargeLog(content.substring(4000))
-        } else {
-            println(content)
-        }
-    }
-
-    private fun debugLog(msg: String) {
-        println("CimaTnDebug: $msg")
-    }
-
-    private fun fixPoster(url: String): String {
-        return url.replace(Regex("/s\\d+-c/"), "/w600/")
-                  .replace(Regex("/w\\d+/"), "/w600/")
-                  .replace(Regex("/s\\d+/"), "/s1600/")
-    }
-
-    private fun extractYear(doc: Element): Int? {
-        return doc.select("ul.RightTaxContent li:contains(تاريخ اصدار)").text()
-            .replace(Regex("[^0-9]"), "")
-            .toIntOrNull()
-    }
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        debugLog("loadLinks started for: $data")
+        debugLog("loadLinks started: $data")
         val doc = app.get(data).document
         val scriptContent = doc.select("script").joinToString(" ") { it.data() }
 
         var foundServer = false
 
-        // 1. مصفوفة السيرفرات const servers
+        // 1. مصفوفة const servers
         val serverRegex = Regex("""const\s+servers\s*=\s*(\[\s*\{.*?\}\s*\])""", RegexOption.DOT_MATCHES_ALL)
         val match = serverRegex.find(scriptContent)
 
@@ -369,7 +320,7 @@ class CimaTn : MainAPI() {
         }
 
         // 2. Iframe مباشر
-        doc.select("iframe").forEach { iframe ->
+        doc.select("div.WatchIframe iframe, iframe").forEach { iframe ->
             val src = iframe.attr("src")
             if (src.isNotEmpty() && !src.contains("facebook") && !src.contains("instagram") && !src.contains("googletagmanager")) {
                 debugLog("Found Iframe: $src")
@@ -387,16 +338,23 @@ class CimaTn : MainAPI() {
                 debugLog("Decoded Secure Link: $decodedUrl")
                 loadExtractor(decodedUrl, data, subtitleCallback, callback)
                 foundServer = true
-            } catch (e: Exception) { 
-                debugLog("Failed to decode secure link: ${e.message}")
-            }
-        }
-
-        if (!foundServer) {
-            debugLog("No servers found on this page!")
+            } catch (e: Exception) { }
         }
 
         return foundServer
+    }
+
+    // ========================================================
+    // دوال مساعدة (موجودة مرة واحدة فقط)
+    // ========================================================
+    private fun printLargeLog(content: String) {
+        if (content.length > 4000) {
+            println("CimaTnDebug: HTML DUMP PART 1:")
+            println(content.substring(0, 4000))
+            printLargeLog(content.substring(4000))
+        } else {
+            println(content)
+        }
     }
 
     private fun debugLog(msg: String) {
