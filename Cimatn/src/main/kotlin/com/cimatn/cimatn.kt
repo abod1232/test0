@@ -52,12 +52,12 @@ class CimaTn : MainAPI() {
     }
 
 
-
 override suspend fun load(url: String): LoadResponse {
-    debugLog("🔵 Load Function Started: $url")
-    val cleanUrl = url.substringBefore("?")
+    debugLog("🔵 Load started: $url")
+    val cleanUrl = url.substringBefore("?").trim()
+    val ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
 
-    // ----- تعامل مع الأفلام بسرعة -----
+    // سريع للفيلم
     if (cleanUrl.contains("film-")) {
         debugLog("🎬 Detected MOVIE")
         val watchUrl = cleanUrl.replace("www.cimatn.com", "cimatunisa.blogspot.com")
@@ -68,7 +68,6 @@ override suspend fun load(url: String): LoadResponse {
         posterUrl = fixPoster(posterUrl)
         val year = extractYear(doc)
         val tags = doc.select("ul.RightTaxContent li a").map { it.text() }
-
         return newMovieLoadResponse(title, watchUrl, TvType.Movie, watchUrl) {
             this.posterUrl = posterUrl
             this.year = year
@@ -77,28 +76,106 @@ override suspend fun load(url: String): LoadResponse {
         }
     }
 
-    // ----- ابدأ معالجة المسلسلات -----
     debugLog("📺 Detected SERIES: $cleanUrl")
-    val response = app.get(cleanUrl)
-    val htmlContent = response.text
-    val doc = response.document
 
-    val title = doc.select("h1.PostTitle").text().trim()
-    val description = doc.select(".StoryArea p").text().trim()
-    var posterUrl = fixPoster(doc.select("#poster img").attr("src"))
-    if (posterUrl.isEmpty()) posterUrl = fixPoster(doc.select(".image img").attr("src"))
-    val year = extractYear(doc)
-    val tags = doc.select("ul.RightTaxContent li a").map { it.text() }
+    // تهيئة headers
+    val headers = mapOf(
+        "User-Agent" to ua,
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language" to "en-US,en;q=0.9"
+    )
 
-    val episodes = mutableListOf<Episode>()
-    val uri = try { java.net.URI(cleanUrl) } catch (e: Exception) { null }
+    // دالة مساعدة داخلية (محاولة GET مرّتين: الأصلية ثم variations)
+    suspend fun fetchWithRedirectHandling(original: String): Pair<com.lagradost.cloudstream3.AppResponse?, String?> {
+        try {
+            // حاول جلب الرابط الأصلي مع هيدرز (إن كان app.get يقبل headers)
+            val resp = try {
+                app.get(original, headers)
+            } catch (_: Exception) {
+                // إن لم يقبل overload، جرب بدون headers
+                app.get(original)
+            }
+
+            // حاوِل تحديد final URL إن أمكن
+            val finalUrl = try {
+                // قد يكون resp.request.url أو resp.url حسب implementation
+                resp.request?.url?.toString() ?: resp.url?.toString()
+            } catch (_: Exception) {
+                null
+            }
+
+            debugLog("Initial fetch done. Status/URL maybe: ${finalUrl ?: "unknown"}")
+
+            // إذا الرد كان redirect أو finalUrl مختلف عن الأصلي، حاول جلب finalUrl صراحةً
+            if (finalUrl != null && !finalUrl.equals(original, ignoreCase = true)) {
+                debugLog("Redirect detected -> fetching final URL: $finalUrl")
+                val resp2 = try {
+                    app.get(finalUrl, headers)
+                } catch (_: Exception) {
+                    app.get(finalUrl)
+                }
+                return Pair(resp2, finalUrl)
+            }
+
+            // لا redirect واضح — نعيد الاستجابة الأولى
+            return Pair(resp, finalUrl ?: original)
+        } catch (e: Exception) {
+            debugLog("fetchWithRedirectHandling error: ${e.message}")
+            return Pair(null, null)
+        }
+    }
+
+    // 1) محاولة رئيسية
+    var (response, finalUrl) = fetchWithRedirectHandling(cleanUrl)
+    var htmlContent = response?.text ?: ""
+    var doc = response?.document
+
+    // 2) إن كانت الصفحة فاضية أو لا تحتوي شيء مفيد، جرب بعض variations شائعة
+    if ((htmlContent.isEmpty() || htmlContent.length < 50) && finalUrl != null) {
+        val tryUrls = listOf(
+            // trailing slash
+            if (!cleanUrl.endsWith("/")) cleanUrl + "/" else cleanUrl,
+            // بدون www
+            cleanUrl.replace("://www.", "://"),
+            // مع www (لو كانت بدونها)
+            if (!cleanUrl.contains("://www.")) cleanUrl.replace("://", "://www.") else cleanUrl
+        ).distinct()
+
+        for (u in tryUrls) {
+            if (u.equals(finalUrl, ignoreCase = true)) continue
+            debugLog("Attempting alternative fetch: $u")
+            val (r2, f2) = fetchWithRedirectHandling(u)
+            if (r2 != null) {
+                response = r2
+                finalUrl = f2
+                htmlContent = response.text
+                doc = response.document
+                if (!htmlContent.isNullOrEmpty() && htmlContent.length > 50) break
+            }
+        }
+    }
+
+    debugLog("Final fetch URL: ${finalUrl ?: "unknown"}, content length=${htmlContent.length}")
+
+    // استخراج بيانات المسلسل العامة
+    val title = doc?.select("h1.PostTitle")?.text()?.trim() ?: "مسلسل"
+    val description = doc?.select(".StoryArea p")?.text()?.trim() ?: ""
+    var posterUrl = doc?.select("#poster img")?.attr("src") ?: ""
+    if (posterUrl.isEmpty()) posterUrl = doc?.select(".image img")?.attr("src") ?: ""
+    posterUrl = fixPoster(posterUrl)
+    val year = doc?.let { extractYear(it) }
+    val tags = doc?.select("ul.RightTaxContent li a")?.map { it.text() } ?: emptyList()
+
+    val uri = try { java.net.URI(finalUrl ?: cleanUrl) } catch (_: Exception) { null }
     val domain = if (uri != null) "${uri.scheme}://${uri.host}" else mainUrl
 
-    // ----- 1) حاول استخراج متغيرات JS (totalEpisodes + baseLink) -----
+    val episodes = mutableListOf<Episode>()
+
+    // ---------------------------
+    // A: استخراج من JS (totalEpisodes + baseLink)
+    // ---------------------------
     try {
-        // متغيرات ممكنة لعدد الحلقات
         val countRegex = Regex("""(?i)(?:const|var|let)?\s*(?:totalEpisodes|totalEp|episodesCount|total)\s*[:=]\s*(\d{1,4})""")
-        // متغيرات ممكنة لقاعدة الرابط
         val baseRegex = Regex("""(?i)(?:const|var|let)?\s*(?:baseLink|linkBase|base_link|baseURL|baseUrl|base)\s*[:=]\s*['"]([^'"]+)['"]""")
 
         val countMatch = countRegex.find(htmlContent)
@@ -107,24 +184,18 @@ override suspend fun load(url: String): LoadResponse {
         if (countMatch != null && baseMatch != null) {
             val count = countMatch.groupValues[1].toIntOrNull() ?: 0
             val base = baseMatch.groupValues[1]
-
-            debugLog("JS pattern found: total=$count, base=$base")
+            debugLog("JS blueprint found -> total=$count, base=$base")
 
             for (i in 1..(if (count <= 0) 0 else count)) {
                 val fullLink = when {
                     base.startsWith("http", ignoreCase = true) -> {
-                        // إذا كانت الـ base كاملة نلصق رقمًا (.html إن لزم)
                         if (base.contains("%d")) base.replace("%d", i.toString())
-                        else if (base.endsWith(".html")) {
-                            // حاول استبدال آخر رقم إن وجد، وإلا ألحق الرقم قبل .html
-                            val replaced = base.replace(Regex("(\\d+)(?=\\.html\$)")) { it.value } // no-op safe
-                            if (replaced == base) "${base.removeSuffix(".html")}$i.html" else replaced
-                        } else "$base$i.html"
+                        else if (base.endsWith(".html")) "${base.removeSuffix(".html")}$i.html"
+                        else "$base$i.html"
                     }
-                    base.startsWith("/") -> "$domain$base$i.html"
+                    base.startsWith("/") -> "$domain${base.trimEnd('/')}/$i.html"
                     else -> "$domain/p/${base.trimStart('/')}$i.html"
                 }
-
                 episodes.add(newEpisode(fullLink) {
                     this.name = "الحلقة $i"
                     this.season = 1
@@ -132,14 +203,16 @@ override suspend fun load(url: String): LoadResponse {
                 })
             }
         } else {
-            debugLog("No JS episode pattern found")
+            debugLog("No JS pattern found or incomplete")
         }
     } catch (ex: Exception) {
         debugLog("JS parse error: ${ex.message}")
     }
 
-    // ----- 2) محاولة استخراج من HTML selectors (إن لم يُعطِ JS أي شيء) -----
-    if (episodes.isEmpty()) {
+    // ---------------------------
+    // B: استخراج من HTML selectors
+    // ---------------------------
+    if (episodes.isEmpty() && doc != null) {
         val selectors = listOf(
             ".allepcont .row a",
             ".EpisodesList a",
@@ -151,14 +224,13 @@ override suspend fun load(url: String): LoadResponse {
             ".post-body a[href*='ep']"
         )
 
-        for (sel in selectors) {
+        loop@ for (sel in selectors) {
             val links = doc.select(sel)
             if (links.isNotEmpty()) {
                 links.forEach { link ->
                     val epName = link.select("h2").text().trim().ifEmpty { link.text().trim() }.ifEmpty { "Episode" }
                     val epUrl = link.attr("href").substringBefore("?")
-                    if (epUrl.isNotEmpty() && epUrl != cleanUrl && !epUrl.contains("#")) {
-                        // حاول استخراج رقم الحلقة من الاسم
+                    if (epUrl.isNotEmpty() && epUrl != finalUrl && !epUrl.contains("#")) {
                         val epNum = Regex("""(\d{1,3})""").findAll(epName).lastOrNull()?.value?.toIntOrNull()
                         episodes.add(newEpisode(epUrl) {
                             this.name = epName
@@ -167,31 +239,32 @@ override suspend fun load(url: String): LoadResponse {
                         })
                     }
                 }
-                if (episodes.isNotEmpty()) break
+                break@loop
             }
         }
     }
 
-    // ----- 3) Fallback: البحث في pages feed (مثل سكربت البايثون) -----
+    // ---------------------------
+    // C: Fallback - pages feed (مثل بايثون)
+    // ---------------------------
     if (episodes.isEmpty()) {
         try {
-            val slug = cleanUrl.substringAfterLast("/").substringBefore(".").replace("_9", "").trim()
+            val slug = (finalUrl ?: cleanUrl).substringAfterLast("/").substringBefore(".").replace("_9", "").trim()
             val encoded = try { java.net.URLEncoder.encode(slug, "UTF-8") } catch (_: Exception) { slug }
             val feedUrl = "$mainUrl/feeds/pages/default?alt=json&max-results=500&q=$encoded"
-            debugLog("Trying feed fallback: $feedUrl")
-            val feedJson = app.get(feedUrl).text
+            debugLog("Feed fallback -> $feedUrl")
+
+            val feedResp = try { app.get(feedUrl, headers) } catch (_: Exception) { app.get(feedUrl) }
+            val feedJson = feedResp.text
             val feedData = AppUtils.parseJson<BloggerFeed>(feedJson)
             feedData.feed?.entry?.forEach { entry ->
                 val l = entry.link?.find { it.rel == "alternate" }?.href ?: return@forEach
                 val t = entry.title?.t ?: ""
                 val cleanLink = l.substringBefore("?")
-                // شرط بسيط: الرابط أو العنوان يحوي كلمة ep/hal9a/حلقة أو رقم
                 val looksLike = listOf("ep", "hal9a", "episode", "حلقة").any { k ->
                     cleanLink.contains(k, ignoreCase = true) || t.contains(k, ignoreCase = true)
                 } || Regex("""\d{1,3}""").containsMatchIn(t)
-
                 if (!looksLike) return@forEach
-
                 val epNum = Regex("""(\d{1,3})""").findAll(t).lastOrNull()?.value?.toIntOrNull()
                 episodes.add(newEpisode(cleanLink) {
                     this.name = t.ifEmpty { "Episode" }
@@ -200,11 +273,11 @@ override suspend fun load(url: String): LoadResponse {
                 })
             }
         } catch (ex: Exception) {
-            debugLog("Feed fallback error: ${ex.message}")
+            debugLog("Feed error: ${ex.message}")
         }
     }
 
-    // ----- تنظيف، إزالة تكرارات، وترتيب -----
+    // تنظيف و فرز
     val finalEpisodes = episodes
         .distinctBy { it.data.substringBefore("?") }
         .sortedWith(
@@ -213,7 +286,7 @@ override suspend fun load(url: String): LoadResponse {
                 .thenBy { it.name ?: "" }
         )
 
-    debugLog("Load produced ${finalEpisodes.size} episodes for $cleanUrl")
+    debugLog("Load finished. Found ${finalEpisodes.size} episodes for $cleanUrl (finalUrl=${finalUrl ?: "unknown"})")
 
     return newTvSeriesLoadResponse(title.ifEmpty { "مسلسل" }, url, TvType.TvSeries, finalEpisodes) {
         this.posterUrl = posterUrl
@@ -222,6 +295,7 @@ override suspend fun load(url: String): LoadResponse {
         this.tags = tags
     }
 }
+
 
     override suspend fun loadLinks(
         data: String,
