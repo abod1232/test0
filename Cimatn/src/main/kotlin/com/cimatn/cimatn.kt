@@ -62,66 +62,67 @@ class CimaTn : MainAPI() {
 
     
   
-        // =========================================================================
-    // دالة Load المطابقة لكود البايثون 100%
+// =========================================================================
+    // دالة Load مع سجلات تتبع (Logging) وطباعة HTML عند الفشل
     // =========================================================================
     override suspend fun load(url: String): LoadResponse {
-        debugLog("Load Function Started: $url")
+        debugLog("🔵 Load Function Started: $url")
         val cleanUrl = url.substringBefore("?")
 
-        // ========================================================
-        // 1. منطق الأفلام (Python: if "film-" in url)
-        // ========================================================
+        // -----------------------------------------------------------
+        // 1. منطق الأفلام
+        // -----------------------------------------------------------
         if (cleanUrl.contains("film-")) {
-            debugLog("🎬 Category: Movie")
-            // استبدال الدومين للوصول للمصدر المباشر
-            val newUrl = cleanUrl.replace("www.cimatn.com", "cimatunisa.blogspot.com")
-            debugLog("✅ Direct Source Link: $newUrl")
+            debugLog("🎬 Type: MOVIE detected")
+            
+            // استبدال الدومين
+            val watchUrl = cleanUrl.replace("www.cimatn.com", "cimatunisa.blogspot.com")
+            debugLog("✅ Redirecting to: $watchUrl")
 
-            // نجلب البيانات للعرض فقط، لكن الرابط المهم هو newUrl
             val doc = app.get(cleanUrl).document
             val title = doc.select("h1.PostTitle").text().trim()
-            val desc = doc.select(".StoryArea p").text().trim()
-            val poster = fixPoster(doc.select("#poster img").attr("src"))
+            val description = doc.select(".StoryArea p").text().trim()
+            var posterUrl = doc.select("#poster img").attr("src")
+            if (posterUrl.isEmpty()) posterUrl = doc.select(".image img").attr("src")
+            posterUrl = fixPoster(posterUrl)
             val year = extractYear(doc)
             val tags = doc.select("ul.RightTaxContent li a").map { it.text() }
 
-            return newMovieLoadResponse(title, newUrl, TvType.Movie, newUrl) {
-                this.posterUrl = poster
+            return newMovieLoadResponse(title, watchUrl, TvType.Movie, watchUrl) {
+                this.posterUrl = posterUrl
                 this.year = year
-                this.plot = desc
+                this.plot = description
                 this.tags = tags
             }
         }
 
-        // ========================================================
-        // 2. منطق المسلسلات (Python: Analysis logic)
-        // ========================================================
-        debugLog("[*] Analyzing Series: $cleanUrl")
+        // -----------------------------------------------------------
+        // 2. منطق المسلسلات
+        // -----------------------------------------------------------
+        debugLog("📺 Type: SERIES detected")
         
+        // جلب الصفحة الرئيسية للمسلسل
         val response = app.get(cleanUrl)
         val htmlContent = response.text
         val doc = response.document
 
         val title = doc.select("h1.PostTitle").text().trim()
-        val desc = doc.select(".StoryArea p").text().trim()
-        val poster = fixPoster(doc.select("#poster img").attr("src"))
+        val description = doc.select(".StoryArea p").text().trim()
+        var posterUrl = fixPoster(doc.select("#poster img").attr("src"))
+        if (posterUrl.isEmpty()) posterUrl = fixPoster(doc.select(".image img").attr("src"))
         val year = extractYear(doc)
         val tags = doc.select("ul.RightTaxContent li a").map { it.text() }
 
         val seasonsList = mutableListOf<Pair<String, String>>()
 
-        // 1. البحث عن المواسم (Seasons Feed) - محاكاة Regex البايثون
-        // re.search(r'const\s+feedURL\s*=\s*"([^"]+)";', html_content)
+        // أ. البحث عن المواسم (JS Feed)
         val feedMatch = Regex("""const\s+feedURL\s*=\s*['"]([^"']+)['"]""").find(htmlContent)
-        
         if (feedMatch != null) {
             val feedUrlSuffix = feedMatch.groupValues[1]
-            // معالجة الرابط كما في البايثون
             val feedUrl = if (feedUrlSuffix.startsWith("http")) feedUrlSuffix else "$mainUrl$feedUrlSuffix"
-            // تنظيف الرابط لجلب JSON صافي
             val cleanFeedUrl = feedUrl.replace("?alt=json-in-script", "?alt=json&max-results=500")
-            
+            debugLog("🔎 Found Season JS Feed: $cleanFeedUrl")
+
             try {
                 val feedJson = app.get(cleanFeedUrl).text
                 val feedData = AppUtils.parseJson<BloggerFeed>(feedJson)
@@ -132,102 +133,99 @@ class CimaTn : MainAPI() {
                         seasonsList.add(sTitle to sLink)
                     }
                 }
-            } catch (e: Exception) { debugLog("Error fetching seasons feed") }
+                debugLog("✅ Parsed ${seasonsList.size} seasons from JSON")
+            } catch (e: Exception) { 
+                debugLog("❌ Error parsing seasons: ${e.message}")
+            }
         }
 
-        // 2. إذا لم نجد Feed، نبحث في HTML
+        // ب. البحث عن المواسم (HTML)
         if (seasonsList.isEmpty()) {
             doc.select(".allseasonss .Small--Box.Season a").forEach {
                 val sTitle = it.attr("title").ifEmpty { "Season" }
                 val sLink = it.attr("href")
                 if (sLink.isNotEmpty()) seasonsList.add(sTitle to sLink)
             }
+            if (seasonsList.isNotEmpty()) debugLog("✅ Found ${seasonsList.size} seasons from HTML")
         }
 
-        // إذا القائمة فارغة، نعتبر الصفحة الحالية هي الموسم الوحيد
+        // ج. حالة موسم واحد
         if (seasonsList.isEmpty()) {
-            debugLog("📂 Main List (Single Season)")
+            debugLog("📂 No seasons found. Using current page as Season 1")
             seasonsList.add("الموسم 1" to cleanUrl)
-        } else {
-            debugLog("   Seasons count: ${seasonsList.size}")
         }
 
         val allEpisodes = mutableListOf<Episode>()
 
-        // الدوران على المواسم
-        seasonsList.forEachIndexed { index, (sTitle, sUrl) ->
+        // د. معالجة كل موسم
+        seasonsList.forEachIndexed { index, (sTitle, sLink) ->
             val seasonNum = index + 1
-            debugLog("📂 $sTitle")
-
-            // جلب حلقات الموسم
-            var eps: List<Episode>
+            debugLog("--------------------------------------------------")
+            debugLog("🔄 Processing Season $seasonNum: $sTitle")
+            debugLog("🔗 Link: $sLink")
             
-            if (sUrl == cleanUrl) {
-                // إذا كان نفس الرابط، نستخدم المحتوى المحمل مسبقاً
-                eps = getEpisodesDirect(htmlContent, sUrl, seasonNum)
-            } else {
-                // إذا رابط مختلف، نجلب محتواه (كما يفعل البايثون: s_resp = requests.get...)
-                try {
-                    val sHtml = app.get(sUrl).text
-                    eps = getEpisodesDirect(sHtml, sUrl, seasonNum)
-                } catch (e: Exception) {
-                    eps = emptyList()
-                }
-            }
-
+            // جلب محتوى صفحة الموسم
+            val seasonHtml = if (sLink == cleanUrl) htmlContent else app.get(sLink).text
+            
+            // محاولة استخراج الحلقات
+            var eps = getEpisodesDirect(seasonHtml, sLink, seasonNum)
+            
             if (eps.isNotEmpty()) {
-                eps.forEach { debugLog("    🔗 ${it.url}") }
+                debugLog("✅ Successfully found ${eps.size} episodes in Season $seasonNum")
                 allEpisodes.addAll(eps)
             } else {
-                debugLog("    (No episodes available directly)")
+                debugLog("❌ FAILED to find episodes in Season $seasonNum")
+                
+                // ========================================================
+                // طباعة محتوى الصفحة عند الفشل لتحليل المشكلة
+                // ========================================================
+                debugLog("⚠️ DUMPING HTML CONTENT FOR ANALYSIS:")
+                printLargeLog(seasonHtml)
+                debugLog("⚠️ END OF HTML DUMP")
+                
+                // محاولة أخيرة بالبحث (Fallback)
+                if (seasonsList.size == 1) { // فقط للموسم الواحد لتجنب التكرار
+                    debugLog("Trying Feed Search Fallback...")
+                    val slug = sLink.substringAfterLast("/").substringBefore(".").replace("_9", "")
+                    eps = getEpisodesFromSearchFeed(slug, seasonNum)
+                    if (eps.isNotEmpty()) {
+                        debugLog("✅ Fallback found ${eps.size} episodes")
+                        allEpisodes.addAll(eps)
+                    }
+                }
             }
-        }
-
-        // محاولة أخيرة للمسلسلات بدون هيكل واضح (مثل El Fetna في كود البايثون)
-        if (allEpisodes.isEmpty()) {
-            debugLog("Attempting Fallback (Feed Search)...")
-            val slug = cleanUrl.substringAfterLast("/").replace(".html", "").replace("_9", "")
-            val eps = getEpisodesFromSearchFeed(slug, 1)
-            allEpisodes.addAll(eps)
         }
 
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, allEpisodes) {
-            this.posterUrl = poster
+            this.posterUrl = posterUrl
             this.year = year
-            this.plot = desc
+            this.plot = description
             this.tags = tags
         }
     }
 
     // ========================================================
-    // دالة استخراج الحلقات (مطابقة لدالة python: get_episodes_direct)
+    // دالة استخراج الحلقات
     // ========================================================
     private fun getEpisodesDirect(htmlContent: String, pageUrl: String, seasonNum: Int): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
-        // محاولة 1: البحث عن متغيرات JS (مثل Ragouj)
-        // count = int(re.search(r'const\s+totalEpisodes\s*=\s*(\d+);', html_content).group(1))
+        // 1. فحص متغيرات JS
         val countMatch = Regex("""const\s+totalEpisodes\s*=\s*(\d+);""").find(htmlContent)
-        // base_link = re.search(r'const\s+baseLink\s*=\s*"([^"]+)";', html_content).group(1)
         val baseLinkMatch = Regex("""const\s+baseLink\s*=\s*['"]([^"']+)['"]""").find(htmlContent)
 
         if (countMatch != null && baseLinkMatch != null) {
             val count = countMatch.groupValues[1].toInt()
             val baseLink = baseLinkMatch.groupValues[1]
-            
-            // استخراج الدومين من الرابط الحالي
-            // parsed_uri = urllib.parse.urlparse(page_url) -> domain
             val domain = "https://${java.net.URI(pageUrl).host}"
+            
+            debugLog("   -> Found JS Config: Count=$count, Base=$baseLink")
 
             for (i in 1..count) {
                 val fullLink = when {
                     baseLink.startsWith("http") -> "$baseLink$i.html"
                     baseLink.startsWith("/") -> "$domain$baseLink$i.html"
-                    else -> {
-                        // إزالة / الزائدة إذا وجدت
-                        val cleanBase = baseLink.removePrefix("/")
-                        "$domain/p/$cleanBase$i.html"
-                    }
+                    else -> "$domain/p/${baseLink.removePrefix("/")}$i.html"
                 }
                 
                 episodes.add(newEpisode(fullLink) {
@@ -236,34 +234,59 @@ class CimaTn : MainAPI() {
                     this.episode = i
                 })
             }
-            return episodes // في البايثون، إذا نجح هذا، يعيد القائمة فوراً
+            return episodes
+        } else {
+            debugLog("   -> No JS config found (totalEpisodes/baseLink)")
         }
 
-        // محاولة 2: البحث عن روابط HTML (للمسلسلات القديمة)
-        // links = soup.select('.allepcont .row a')
+        // 2. فحص روابط HTML
         val doc = org.jsoup.Jsoup.parse(htmlContent)
-        val links = doc.select(".allepcont .row a")
         
-        links.forEach { link ->
-            val title = link.select("h2").text().trim().ifEmpty { "Episode" }
-            val href = link.attr("href")
-            
-            // استخراج رقم الحلقة للمساعدة في الترتيب
-            val epNum = Regex("""(\d+)""").findAll(title).lastOrNull()?.value?.toIntOrNull()
+        // قائمة بالمحددات المحتملة (CSS Selectors)
+        val selectors = listOf(
+            ".allepcont .row a",          // التصميم الجديد
+            ".EpisodesList a",            // التصميم القديم (قائمة جانبية)
+            "#EpisodesList a",            // احتمال ID
+            ".episodes-container a",      // احتمال
+            "div[class*='Episodes'] a",   // بحث عام عن كلاس يحتوي Episodes
+            ".post-body a[href*='-ep-']", // بحث داخل المقال عن روابط حلقات
+            ".post-body a[href*='hal9a']" // بحث عن "حلقة"
+        )
 
-            if (href.isNotEmpty()) {
-                episodes.add(newEpisode(href) {
-                    this.name = title
-                    this.season = seasonNum
-                    this.episode = epNum
-                })
+        for (selector in selectors) {
+            val links = doc.select(selector)
+            if (links.isNotEmpty()) {
+                debugLog("   -> Found ${links.size} potential links using selector: '$selector'")
+                
+                links.forEach { link ->
+                    val epName = link.select("h2").text().trim()
+                        .ifEmpty { link.text().trim() }
+                        .ifEmpty { "Episode" }
+                    val epUrl = link.attr("href")
+                    
+                    // استخراج رقم الحلقة
+                    val epNum = Regex("""(\d+)""").findAll(epName).lastOrNull()?.value?.toIntOrNull()
+
+                    // شروط القبول: الرابط غير فارغ، ليس الصفحة الحالية، ليس رابط هاش
+                    if (epUrl.isNotEmpty() && epUrl != pageUrl && !epUrl.contains("#")) {
+                         // شرط إضافي: التأكد أنه رابط تدوينة (ينتهي بـ .html)
+                         if (epUrl.contains(".html")) {
+                             episodes.add(newEpisode(epUrl) {
+                                 this.name = epName
+                                 this.season = seasonNum
+                                 this.episode = epNum
+                             })
+                         }
+                    }
+                }
+                
+                if (episodes.isNotEmpty()) break // وجدنا حلقات، نتوقف عن تجربة المحددات الأخرى
             }
         }
         
         return episodes
     }
 
-    // دالة البحث الاحتياطي (Fallback) كما في البايثون
     private suspend fun getEpisodesFromSearchFeed(slug: String, seasonNum: Int): List<Episode> {
         val episodes = mutableListOf<Episode>()
         val pageFeedUrl = "$mainUrl/feeds/pages/default?alt=json&max-results=100&q=$slug"
@@ -273,10 +296,10 @@ class CimaTn : MainAPI() {
             val feedData = AppUtils.parseJson<BloggerFeed>(feedJson)
             feedData.feed?.entry?.forEach { e ->
                 val l = e.link?.find { it.rel == "alternate" }?.href ?: ""
-                // if slug in l and ('ep' in l or 'hal9a' in l):
+                val t = e.title?.t ?: "Episode"
+                
                 if (l.contains(slug) && (l.contains("ep") || l.contains("hal9a"))) {
-                     val t = e.title?.t ?: "Episode"
-                     val epNum = Regex("""(\d+)\.html""").find(l)?.groupValues?.get(1)?.toIntOrNull()
+                     val epNum = Regex("""(\d+)""").findAll(t).lastOrNull()?.value?.toIntOrNull()
                      
                      episodes.add(newEpisode(l) {
                          this.name = t
@@ -290,6 +313,34 @@ class CimaTn : MainAPI() {
         return episodes
     }
 
+    // ========================================================
+    // دالة لطباعة النصوص الطويلة في Logcat
+    // ========================================================
+    private fun printLargeLog(content: String) {
+        if (content.length > 4000) {
+            println("CimaTnDebug: HTML DUMP PART 1:")
+            println(content.substring(0, 4000))
+            printLargeLog(content.substring(4000))
+        } else {
+            println(content)
+        }
+    }
+
+    private fun debugLog(msg: String) {
+        println("CimaTnDebug: $msg")
+    }
+
+    private fun fixPoster(url: String): String {
+        return url.replace(Regex("/s\\d+-c/"), "/w600/")
+                  .replace(Regex("/w\\d+/"), "/w600/")
+                  .replace(Regex("/s\\d+/"), "/s1600/")
+    }
+
+    private fun extractYear(doc: Element): Int? {
+        return doc.select("ul.RightTaxContent li:contains(تاريخ اصدار)").text()
+            .replace(Regex("[^0-9]"), "")
+            .toIntOrNull()
+    }
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
