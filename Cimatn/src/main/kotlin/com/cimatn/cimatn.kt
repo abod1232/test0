@@ -243,37 +243,188 @@ class CimaTn : MainAPI() {
     // ========================================================
     // دالة البحث الاحتياطي (Feed Search)
     // ========================================================
-    private suspend fun getEpisodesFromSearchFeed(slug: String, seasonNum: Int): List<Episode> {
-        val episodes = mutableListOf<Episode>()
-        val pageFeedUrl = "$mainUrl/feeds/pages/default?alt=json&max-results=100&q=$slug"
-        debugLog("   -> Fetching Feed: $pageFeedUrl")
-        
-        try {
-            val feedJson = app.get(pageFeedUrl).text
-            val feedData = AppUtils.parseJson<BloggerFeed>(feedJson)
-            feedData.feed?.entry?.forEach { e ->
-                val l = e.link?.find { it.rel == "alternate" }?.href ?: ""
-                val t = e.title?.t ?: "Episode"
-                
-                // شرط: الرابط يحتوي على slug ويحتوي على مؤشرات الحلقة
-                if (l.contains(slug) && (l.contains("ep") || l.contains("hal9a"))) {
-                     val epNum = Regex("""(\d+)""").findAll(t).lastOrNull()?.value?.toIntOrNull()
-                     
-                     episodes.add(newEpisode(l) {
-                         this.name = t
-                         this.season = seasonNum
-                         this.episode = epNum
-                     })
-                }
-            }
-            episodes.sortBy { it.episode }
-        } catch (e: Exception) { debugLog("Feed Error: ${e.message}") }
-        return episodes
+    private suspend fun getEpisodesFromSearchFeed(slugInput: String, defaultSeasonNum: Int): List<Episode> {
+    suspend fun fetchFeedJson(url: String): String? {
+        return try {
+            var text = app.get(url).text
+            // البعض يرد JSONP أو script-wrapped -> نحاول تنظيفه
+            val jsonOnly = Regex("""^[^\{]*(""" + "\\{[\\s\\S]*\\}" + """)[^\}]*$""").find(text)?.groupValues?.get(1)
+            if (jsonOnly != null) jsonOnly else text
+        } catch (e: Exception) {
+            debugLog("Feed fetch error for $url : ${e.message}")
+            null
+        }
     }
 
-    // ========================================================
-    // دالة LoadLinks
-    // ========================================================
+    // تحويل أرقام عربية-هندية الى لاتينية
+    fun normalizeDigits(s: String): String {
+        val map = mapOf(
+            '٠' to '0','١' to '1','٢' to '2','٣' to '3','٤' to '4',
+            '٥' to '5','٦' to '6','٧' to '7','٨' to '8','٩' to '9'
+        )
+        return s.map { map[it] ?: it }.joinToString("")
+    }
+
+    // يستخرج رقم الموسم و الحلقة من العنوان إن وجد
+    fun parseSeasonEpisode(titleRaw: String): Pair<Int?, Int?> {
+        val title = normalizeDigits(titleRaw)
+        // أشهر الباترنات بالإنجليزية و العربية و SxxExx و Sxx Eyy و "الموسم X" و "الحلقة Y" و ep/E
+        val patterns = listOf(
+            // SxxExx or Sxx Eyy
+            Regex("""[Ss](\d{1,2})\s*[^\dA-Za-z]{0,3}[Ee](\d{1,3})"""),
+            Regex("""[Ss]eason[\s:\-]*?(\d{1,2}).*[Ee]p[\s:\-]*?(\d{1,3})""", RegexOption.IGNORE_CASE),
+            Regex("""([Ee]p|[Ee])\s*\.?\s*(\d{1,3})""", RegexOption.IGNORE_CASE), // ep 12 or E12
+            Regex("""الحلقة[\s:\-]*?(\d{1,3})"""),
+            Regex("""الموسم[\s:\-]*?(\d{1,2})"""),
+            Regex("""season[\s:\-]*?(\d{1,2})""", RegexOption.IGNORE_CASE),
+            // generic last number fallback (useful when only episode number present)
+            Regex("""(\d{1,3})""")
+        )
+
+        // Try combined patterns first (season+episode)
+        val combined = listOf(
+            Regex("""[Ss](\d{1,2})[^\dA-Za-z]{0,3}[Ee](\d{1,3})"""),
+            Regex("""season[\s:\-]*?(\d{1,2}).*?[Ee]p[\s:\-]*?(\d{1,3})""", RegexOption.IGNORE_CASE),
+            Regex("""الموسم[\s:\-]*?(\d{1,2}).*?الحلقة[\s:\-]*?(\d{1,3})""")
+        )
+        for (rg in combined) {
+            val m = rg.find(title)
+            if (m != null && m.groupValues.size >= 3) {
+                val s = m.groupValues[1].toIntOrNull()
+                val e = m.groupValues[2].toIntOrNull()
+                if (s != null || e != null) return Pair(s, e)
+            }
+        }
+
+        // فصل: ابحث عن الموسم ثم الحلقة، أو الحلقة ثم الموسم
+        val seasonOnly = Regex("""(?:الموسم|season|[Ss])[\s:\-]*?(\d{1,2})""", RegexOption.IGNORE_CASE).find(title)
+        val episodeOnly = Regex("""(?:الحلقة|ep|[Ee])[\s:\-]*?(\d{1,3})""", RegexOption.IGNORE_CASE).find(title)
+
+        val seasonNum = seasonOnly?.groupValues?.get(1)?.toIntOrNull()
+        val episodeNum = episodeOnly?.groupValues?.get(1)?.toIntOrNull()
+
+        if (seasonNum != null || episodeNum != null) {
+            return Pair(seasonNum, episodeNum)
+        }
+
+        // آخر محاولة: استخدم آخر رقم في العنوان كحلقة
+        val lastNumber = Regex("""(\d{1,3})""").findAll(title).lastOrNull()?.value?.toIntOrNull()
+        if (lastNumber != null) {
+            // احتمالية أن يكون الرقم موسم أم حلقة: نفترض حلقة إن لم يذكر الموسم
+            return Pair(null, lastNumber)
+        }
+
+        return Pair(null, null)
+    }
+
+    // إعداد candidate feed URLs ذكية
+    val slug = slugInput.replace(".html", "").trim()
+    val encoded = try { java.net.URLEncoder.encode(slug, "UTF-8") } catch (_: Exception) { slug }
+    val candidates = listOf(
+        "$mainUrl/feeds/pages/default?alt=json&max-results=500&q=$encoded",
+        "$mainUrl/feeds/pages/default?alt=json-in-script&max-results=500&q=$encoded",
+        "$mainUrl/feeds/posts/default?alt=json&max-results=500&q=$encoded",
+        "$mainUrl/feeds/posts/default?alt=json-in-script&max-results=500&q=$encoded",
+        // generic site-wide feeds (قد تكون مفيدة)
+        "$mainUrl/feeds/pages/default?alt=json&max-results=500",
+        "$mainUrl/feeds/posts/default?alt=json&max-results=500"
+    )
+
+    val episodes = mutableListOf<Episode>()
+    val seenUrls = mutableSetOf<String>()
+
+    for (feedUrl in candidates) {
+        val feedJson = fetchFeedJson(feedUrl) ?: continue
+
+        try {
+            val feedData = AppUtils.parseJson<BloggerFeed>(feedJson)
+            val entries = feedData?.feed?.entry ?: emptyList()
+            debugLog("Feed ${feedUrl} returned ${entries.size} entries")
+
+            entries.forEach { e ->
+                val link = e.link?.find { it.rel == "alternate" }?.href ?: return@forEach
+                var title = e.title?.t ?: ""
+                if (title.isEmpty()) {
+                    // أحيانًا العنوان داخل media thumbnail أو content -> نحاول استدعاء mediaThumbnail
+                    title = e.mediaThumbnail?.url ?: ""
+                }
+
+                // تنظيف عنوان و رابط
+                val cleanLink = link.split("?")[0]
+                if (cleanLink.isEmpty() || seenUrls.contains(cleanLink)) return@forEach
+
+                val (parsedSeason, parsedEpisode) = parseSeasonEpisode(title)
+                val season = parsedSeason ?: defaultSeasonNum
+                val episodeNumber = parsedEpisode // could be null
+
+                // شرط إضافي: تأكد من أن الرابط يبدو كحلقة (ep, hal9a, رقم في العنوان أو slug يحتوي ep)
+                val looksLikeEpisode = listOf("ep", "hal9a", "episode", "حلقة").any { keyword ->
+                    cleanLink.contains(keyword, ignoreCase = true) || title.contains(keyword, ignoreCase = true)
+                } || episodeNumber != null
+
+                if (!looksLikeEpisode) {
+                    // لا نرفضه كليًا — أحيانًا العنوان يحوي رقم فقط؛ لكن لا نضيف إلا لو فيه دليل
+                    // لو لم نكن نملك حلقة أخرى، يمكننا إضافته لاحقًا (هنا نتخطاه)
+                    return@forEach
+                }
+
+                // إنشاء Episode
+                val ep = newEpisode(cleanLink) {
+                    this.name = title
+                    this.season = season
+                    this.episode = episodeNumber
+                }
+
+                episodes.add(ep)
+                seenUrls.add(cleanLink)
+            }
+
+            // إن وجدنا عدد جيد من الحلقات - نوقف البحث (تحسين الأداء)
+            if (episodes.size >= 5) {
+                debugLog("Enough episodes found (${episodes.size}), stopping feed search.")
+                break
+            }
+        } catch (ex: Exception) {
+            debugLog("Feed parse error for $feedUrl : ${ex.message}")
+        }
+    }
+
+    // في حال لم نجد شيء من الـ feeds: حاول استخدام آخر محرك بحث بسيط بالـ slug في pages feed مرة واحدة أكثر تساهلًا
+    if (episodes.isEmpty()) {
+        try {
+            val fallback = "$mainUrl/feeds/pages/default?alt=json&max-results=500&q=${encoded.replace('-', ' ')}"
+            val feedJson = fetchFeedJson(fallback)
+            val feedData = feedJson?.let { AppUtils.parseJson<BloggerFeed>(it) }
+            feedData?.feed?.entry?.forEach { e ->
+                val link = e.link?.find { it.rel == "alternate" }?.href ?: return@forEach
+                val title = e.title?.t ?: ""
+                val cleanLink = link.split("?")[0]
+                if (seenUrls.contains(cleanLink)) return@forEach
+                val (s, epn) = parseSeasonEpisode(title)
+                val season = s ?: defaultSeasonNum
+                val episodeNumber = epn
+                if (epn == null && !title.matches(Regex(""".*\d.*"""))) return@forEach
+                val ep = newEpisode(cleanLink) {
+                    this.name = title
+                    this.season = season
+                    this.episode = episodeNumber
+                }
+                episodes.add(ep)
+                seenUrls.add(cleanLink)
+            }
+        } catch (_: Exception) { /* ignore */ }
+    }
+
+    // ترتيب و تنظيف النتائج:
+    val sorted = episodes
+        .distinctBy { it.url } // حذر مزدوج
+        .sortedWith(compareBy<Episode> { it.season ?: Int.MAX_VALUE }
+            .thenBy { it.episode ?: Int.MAX_VALUE }
+            .thenBy { it.name ?: "" })
+
+    debugLog("getEpisodesFromSearchFeed: returning ${sorted.size} episodes")
+    return sorted
+}
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
