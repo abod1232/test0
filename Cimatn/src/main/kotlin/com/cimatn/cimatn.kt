@@ -51,7 +51,6 @@ class CimaTn : MainAPI() {
         return doc.select("#holder a.itempost").mapNotNull { toSearchResult(it) }
     }
 
-
 override suspend fun load(url: String): LoadResponse {
     val cleanUrl = url.substringBefore("?")
 
@@ -147,6 +146,7 @@ override suspend fun load(url: String): LoadResponse {
         this.plot = description
     }
 }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
