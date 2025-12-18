@@ -124,216 +124,249 @@ class Tuniflix : MainAPI() {
         }
     }
 
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val document = app.get(data).document
+ 
+        
+override suspend fun loadLinks(
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
 
-        // البحث الشامل عن الروابط (Iframe أو Script src)
-        // 1. البحث عن روابط المشغل المباشرة
-        val playerFrames = document.select("iframe[src*='strp2p'], script[src*='strp2p']")
-        playerFrames.forEach { frame ->
-            val src = fixUrl(frame.attr("src"))
-            Strp2p.extract(src, callback)
+    // =================== إعدادات ثابتة ===================
+    val INPUT_URL = "https://tuniflix.site/episode/home-for-christmas-1x1"
+    val KEY = "kiemtienmua911ca".toByteArray(Charsets.UTF_8) // 16 bytes
+    val API_BASE = "https://watch.strp2p.site"
+    val DEFAULT_HEADERS = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer" to "https://tuniflix.site/"
+    )
+
+    // ------------------- أدوات مساعدة -------------------
+    fun fixUrl(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        var u = url.replace("&#038;", "&").replace("&amp;", "&")
+        return when {
+            u.startsWith("//") -> "https:$u"
+            u.startsWith("/") -> "https://tuniflix.site$u"
+            else -> u
         }
-
-        // 2. البحث عن روابط التضمين الداخلية (trembed) للدخول في "جحر الأرنب"
-        val embedFrames = document.select("iframe[src*='trembed'], iframe[src*='trid']")
-        embedFrames.forEach { frame ->
-            val src = fixUrl(frame.attr("src"))
-            // الدخول للصفحة الداخلية
-            val embedDoc = app.get(src, referer = mainUrl).document
-            // البحث عن المشغل داخل الصفحة الداخلية
-            val innerPlayer = embedDoc.selectFirst("iframe[src*='strp2p'], script[src*='strp2p']")
-            if (innerPlayer != null) {
-                val playerSrc = fixUrl(innerPlayer.attr("src"))
-                Strp2p.extract(playerSrc, callback)
-            }
-        }
-
-        // 3. استخراج السيرفرات العادية
-        document.select("iframe").forEach { iframe ->
-            val src = fixUrl(iframe.attr("src"))
-            if (!src.contains("trembed") && !src.contains("strp2p")) {
-                loadExtractor(src, mainUrl, subtitleCallback, callback)
-            }
-        }
-
-        return true
     }
 
-    private fun fixUrl(url: String): String {
-        if (url.startsWith("//")) return "https:$url"
-        if (url.startsWith("/")) return mainUrl + url
-        return url
+    fun sanitizeFinalUrl(rawLink: String): String {
+        val regex = Regex("([a-zA-Z0-9.-]+\\.[a-zA-Z]{2,10}/.*)")
+        val m = regex.find(rawLink)
+        return if (m != null) {
+            "https://${m.groupValues[1]}"
+        } else rawLink
     }
 
-    // === كلاس فك التشفير (The Smart Decryptor) ===
-    // === كلاس فك التشفير واستخراج الروابط ===
-    object Strp2p {
-        private const val KEY_STRING = "kiemtienmua911ca"
-        private const val API_BASE = "https://watch.strp2p.site"
-
-        // دالة توليد الـ IV (محاكاة لمنطق JS وبايثون)
-        private fun getIv(D: Int, W: Int): ByteArray {
-            try {
-                // الجزء الأول: (1..9) + D
-                val part1 = (1..9).map { (it + D).toChar() }.joinToString("")
-
-                // الجزء الثاني: القيم الثابتة والمتغيرة [D, 111, W, 128, 132, 97, 95]
-                val part2Chars = intArrayOf(D, 111, W, 128, 132, 97, 95)
-                val part2 = part2Chars.map { it.toChar() }.joinToString("")
-
-                val fullString = part1 + part2
-                // نأخذ أول 16 بايت فقط
-                return fullString.toByteArray(Charsets.UTF_8).copyOfRange(0, 16)
-            } catch (e: Exception) {
-                return ByteArray(16)
+    // ------------------- فك التشفير -------------------
+    fun getIv(D: Int, W: Int): ByteArray {
+        return try {
+            val part1 = (1..9).map { (it + D).toChar() }.joinToString("")
+            val part2Chars = listOf(D, 111, W, 128, 132, 97, 95)
+            val part2 = part2Chars.map { it.toChar() }.joinToString("")
+            val ivBytes = (part1 + part2).toByteArray(Charsets.UTF_8)
+            if (ivBytes.size >= 16) ivBytes.sliceArray(0 until 16)
+            else {
+                val out = ByteArray(16)
+                System.arraycopy(ivBytes, 0, out, 0, ivBytes.size.coerceAtMost(16))
+                out
             }
+        } catch (e: Exception) {
+            ByteArray(16) { 0 }
         }
+    }
 
-        // دالة فك التشفير
-        private fun decrypt(encryptedHex: String, D: Int, W: Int): String? {
-            return try {
-                var cleanHex = encryptedHex.trim().replace("\"", "")
-                // إصلاح الطول الفردي (Odd-length string)
-                if (cleanHex.length % 2 != 0) {
-                    cleanHex = cleanHex.dropLast(1)
-                }
-
-                val encryptedBytes = cleanHex.chunked(2)
-                    .map { it.toInt(16).toByte() }
-                    .toByteArray()
-
-                val skeySpec = SecretKeySpec(KEY_STRING.toByteArray(Charsets.UTF_8), "AES")
-                val ivSpec = IvParameterSpec(getIv(D, W))
-
-                val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-                cipher.init(Cipher.DECRYPT_MODE, skeySpec, ivSpec)
-
-                val original = cipher.doFinal(encryptedBytes)
-                String(original, Charsets.UTF_8)
-            } catch (e: Exception) {
-                null
+    fun hexStringToByteArray(s: String): ByteArray? {
+        val clean = s.replace("\"", "").trim()
+        val even = if (clean.length % 2 != 0) clean.substring(0, clean.length - 1) else clean
+        return try {
+            val len = even.length
+            val data = ByteArray(len / 2)
+            var i = 0
+            while (i < len) {
+                data[i / 2] = ((Character.digit(even[i], 16) shl 4) + Character.digit(even[i + 1], 16)).toByte()
+                i += 2
             }
+            data
+        } catch (e: Exception) {
+            null
         }
+    }
 
-        // --- الدالة الرئيسية (extract) ---
-        suspend fun extract(initialUrl: String, callback: (ExtractorLink) -> Unit) {
-            try {
-                var videoId = ""
+    fun decryptPayload(encryptedHex: String): org.json.JSONObject? {
+        var hex = encryptedHex.trim().replace("\"", "")
+        if (hex.length % 2 != 0) hex = hex.substring(0, hex.length - 1)
+        val encryptedBytes = hexStringToByteArray(hex) ?: return null
 
-                // 1. محاولة استخراج ID مباشرة إذا كان الرابط هو المشغل
-                if (initialUrl.contains("strp2p.site")) {
-                    videoId = if (initialUrl.contains("#")) {
-                        initialUrl.substringAfter("#").substringBefore("&")
-                    } else {
-                        initialUrl.substringAfter("id=").substringBefore("&")
-                    }
-                }
-                // 2. إذا كان الرابط هو Tuniflix Embed، نبحث عن iframe المشغل بداخله
-                else if (initialUrl.contains("tuniflix.site")) {
-                    val doc = app.get(initialUrl).document
-                    val playerIframe = doc.selectFirst("iframe[src*='strp2p']")?.attr("src")
-                        ?: doc.selectFirst("iframe[src*='trembed']")
-                            ?.attr("src") // في حال كان هناك embed داخل embed
-
-                    if (playerIframe != null) {
-                        // إذا وجدنا رابط داخلي، نعيد استدعاء الدالة عليه (Recursion) أو نستخرج الـ ID
-                        if (playerIframe.contains("strp2p")) {
-                            videoId = playerIframe.substringAfter("#").substringBefore("&")
-                        } else {
-                            // لو كان رابط وسيط آخر، ندخل إليه
-                            extract(
-                                if (playerIframe.startsWith("//")) "https:$playerIframe" else playerIframe,
-                                callback
-                            )
-                            return
-                        }
-                    }
-                }
-
-                if (videoId.isEmpty()) return
-
-                // 3. طلب الـ API
-                val apiUrl = "$API_BASE/api/v1/video?id=$videoId"
-                val headers = mapOf(
-                    "Referer" to "https://watch.strp2p.site/",
-                    "Origin" to "https://watch.strp2p.site",
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                )
-
-                val encryptedResponse = app.get(apiUrl, headers = headers).text
-
-                // 4. كسر التشفير (Brute Force المصغر)
-                val candidates = listOf(
-                    Pair(48, 0),    // الأكثر شيوعاً
-                    Pair(48, 141),
-                    Pair(48, 189),
-                    Pair(48, 63),
-                    Pair(323, 0)
-                )
-
-                for ((D, W) in candidates) {
-                    val jsonResult = decrypt(encryptedResponse, D, W)
-
-                    // إذا بدأ النص بـ { فهذا يعني نجاح فك التشفير
-                    if (jsonResult != null && jsonResult.trim().startsWith("{")) {
-                        try {
-                            val data = AppUtils.parseJson<StrpResponse>(jsonResult)
-
-                            // الأولوية لرابط Cloudflare (cf) ثم المصدر (source)
-                            val rawLink = data.cf ?: data.source
-
-                            if (!rawLink.isNullOrEmpty()) {
-                                // 5. تنظيف الرابط (Sanitization) - الحل الجذري لمشكلة http%...
-                                // نستخدم Regex لاستخراج الدومين والمسار فقط وتجاهل أي بادئة مشوهة
-                                // النمط: يبدأ بحروف/أرقام، يحتوي على نقطة، ثم امتداد من حرفين على الأقل، ثم باقي المسار
-                                val urlRegex = Regex("""([a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}/.*)""")
-                                val match = urlRegex.find(rawLink)
-
-                                val finalLink = if (match != null) {
-                                    "https://${match.value}"
-                                } else {
-                                    // حل احتياطي: إذا لم ينجح الـ Regex نحاول الإصلاح اليدوي
-                                    if (rawLink.contains("://")) {
-                                        "https://" + rawLink.substringAfter("://")
-                                    } else if (!rawLink.startsWith("http")) {
-                                        "https://$rawLink"
-                                    } else {
-                                        rawLink
-                                    }
-                                }
-
-                                // التأكد النهائي من صحة الرابط وإرساله
-                                callback.invoke(
-                                    newExtractorLink(
-                                        "Tuniflix",
-                                        "Tuniflix Server",
-                                        finalLink,
-                                    ) {
-                                        "https://watch.strp2p.site/"
-                                        Qualities.Unknown.value
-                                    }
-                                )
-                                return // وجدنا الرابط، نخرج من الدالة
-                            }
-                        } catch (e: Exception) {
-                            // فشل تحليل JSON، نجرب القيم التالية
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-
-        data class StrpResponse(
-            @JsonProperty("source") val source: String?,
-            @JsonProperty("cf") val cf: String?
+        val candidates = listOf(
+            Pair(48, 105),
+            Pair(48, 141),
+            Pair(48, 0),
+            Pair(48, 189),
+            Pair(48, 63),
+            Pair(323, 0)
         )
+
+        for ((D, W) in candidates) {
+            try {
+                val iv = getIv(D, W)
+                val secretKey = javax.crypto.spec.SecretKeySpec(KEY, "AES")
+                val cipher = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding")
+                cipher.init(javax.crypto.Cipher.DECRYPT_MODE, secretKey, javax.crypto.spec.IvParameterSpec(iv))
+
+                val firstBlock = if (encryptedBytes.size >= 16) encryptedBytes.sliceArray(0 until 16) else encryptedBytes
+                try {
+                    val decFirst = cipher.doFinal(firstBlock)
+                    val firstByte = decFirst[0].toInt() and 0xFF
+                    if (firstByte == 0x7B || firstByte == 0x20) {
+                        val iv2 = getIv(D, W)
+                        val cipher2 = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding")
+                        cipher2.init(javax.crypto.Cipher.DECRYPT_MODE, secretKey, javax.crypto.spec.IvParameterSpec(iv2))
+                        val fullDecrypted = cipher2.doFinal(encryptedBytes)
+                        val jsonStr = String(fullDecrypted, Charsets.UTF_8)
+                        return org.json.JSONObject(jsonStr)
+                    }
+                } catch (inner: Exception) {
+                    // try next candidate
+                }
+            } catch (e: Exception) {
+                // continue
+            }
+        }
+        return null
     }
+
+    // ------------------- استخراج المعرف بشكل متكرر -------------------
+    fun getVideoIdRecursive(url: String, depth: Int = 0): String? {
+        if (depth > 3) return null
+        println("[*] Scraping (Depth $depth): $url")
+        return try {
+            val headers = HashMap<String, String>(DEFAULT_HEADERS)
+            if (depth > 0) headers["Referer"] = url
+
+            val doc = org.jsoup.Jsoup.connect(url).headers(headers).timeout(10000).get()
+
+            val iframes = doc.select("iframe")
+            for (iframe in iframes) {
+                val srcRaw = iframe.attr("src")
+                val src = fixUrl(srcRaw) ?: continue
+
+                if ("strp2p.site" in src) {
+                    println("    [+] Found Player Iframe: $src")
+                    if ("#" in src) {
+                        val frag = src.split("#", limit = 2)[1]
+                        val id = frag.split("&")[0]
+                        return id
+                    }
+                    if ("id=" in src) {
+                        return src.split("id=")[1].split("&")[0]
+                    }
+                }
+
+                if ((src.contains("trembed=") || src.contains("trid=")) && src != url) {
+                    println("    -> Following Embed: $src")
+                    val res = getVideoIdRecursive(src, depth + 1)
+                    if (res != null) return res
+                }
+            }
+            null
+        } catch (e: Exception) {
+            println("[!] Error: ${e.message}")
+            null
+        }
+    }
+
+    // ------------------- التنفيذ الرئيسي داخل الدالة -------------------
+    try {
+        println("--- Processing: $INPUT_URL ---")
+        val videoId = getVideoIdRecursive(INPUT_URL)
+        if (videoId.isNullOrBlank()) {
+            println("❌ Failed to find Video ID.")
+            return false
+        }
+
+        println("\n[+] Target ID: $videoId")
+        val apiUrl = "$API_BASE/api/v1/video?id=$videoId&w=1366&h=768&r=null"
+        println("[*] Calling API: $apiUrl")
+
+        val apiHeaders = mapOf(
+            "Referer" to "https://watch.strp2p.site/",
+            "Origin" to "https://watch.strp2p.site",
+            "User-Agent" to DEFAULT_HEADERS["User-Agent"]!!
+        )
+
+        val apiResponse = org.jsoup.Jsoup.connect(apiUrl)
+            .ignoreContentType(true)
+            .headers(apiHeaders)
+            .timeout(10000)
+            .execute()
+
+        val bodyText = apiResponse.body()
+        val dataJson = decryptPayload(bodyText)
+
+        if (dataJson != null) {
+            println("[+] Decryption Successful!")
+
+            val sourceLink = if (dataJson.has("source")) dataJson.optString("source", null) else null
+            val cfLink = if (dataJson.has("cf")) dataJson.optString("cf", null) else null
+
+            var rawLink: String? = null
+            if (!sourceLink.isNullOrBlank() && sourceLink.contains("://")) {
+                println("    -> Priority: 'source' link found.")
+                rawLink = sourceLink
+            } else if (!cfLink.isNullOrBlank()) {
+                println("    -> Fallback: Using 'cf' link.")
+                rawLink = cfLink
+            }
+
+            if (rawLink != null) {
+                val finalLink = sanitizeFinalUrl(rawLink)
+                println("--------------------------------------------------")
+                println("🎥 FINAL M3U8 URL: $finalLink")
+                println("--------------------------------------------------")
+
+                // فحص الحالة عبر HEAD
+                try {
+                    val headResp = org.jsoup.Jsoup.connect(finalLink)
+                        .ignoreHttpErrors(true)
+                        .method(org.jsoup.Connection.Method.HEAD)
+                        .headers(apiHeaders)
+                        .timeout(5000)
+                        .execute()
+                    println("✅ STATUS: ${headResp.statusCode()} OK")
+                } catch (e: Exception) {
+                    println("⚠️ Validation Error: ${e.message}")
+                }
+
+                // ==== هنا: استدعاء callback بالطريقة اللي طلبتها ====
+                callback.invoke(
+                    newExtractorLink(
+                        "Tuniflix",
+                        "Tuniflix Server",
+                        finalLink,
+                    ) {
+                        this.referer = "https://watch.strp2p.site/"
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+
+                return true
+            } else {
+                println("[-] Decrypted, but no valid 'source' or 'cf' link found.")
+                println(dataJson.toString(4))
+                return false
+            }
+        } else {
+            println("❌ Decryption Failed.")
+            return false
+        }
+
+    } catch (e: Exception) {
+        println("Error: ${e.message}")
+        return false
+    }
+}
 }
