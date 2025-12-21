@@ -71,7 +71,7 @@ override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageR
         homePageList.add(HomePageList("آخر الأخبار", news))
     }
 
-    return HomePageResponse(homePageList)
+    return newHomePageResponse(homePageList)
 }
 
 override suspend fun search(query: String): List<SearchResponse> {
