@@ -47,34 +47,34 @@ class VipTV : MainAPI() {
                 var currentName = ""
 
                 while (scanner.hasNextLine()) {
-                    val line = scanner.nextLine().trim()
+    val line = scanner.nextLine().trim()
 
-                    if (line.startsWith("#EXTINF")) {
-    val groupMatch = Regex("group-title=\"(.*?)\"").find(line)
-    currentGroup = groupMatch?.groupValues?.get(1) ?: "Uncategorized"
+    if (line.startsWith("#EXTINF")) {
 
-    val logoMatch = Regex("tvg-logo=\"(.*?)\"").find(line)
-    currentLogo = logoMatch?.groupValues?.get(1)
+        val groupMatch = Regex("group-title=\"(.*?)\"").find(line)
+        currentGroup = groupMatch?.groupValues?.get(1) ?: "Uncategorized"
 
-    currentName = line.substringAfterLast(",").trim()
+        val logoMatch = Regex("tvg-logo=\"(.*?)\"").find(line)
+        currentLogo = logoMatch?.groupValues?.get(1)
+
+        currentName = line.substringAfterLast(",").trim()
+
+    } else if (line.startsWith("http")) {
+
+        if (currentName.isNotEmpty()) {
+
+            val channelData = newLiveSearchResponse(currentName, line, TvType.Live) {
+                this.posterUrl = currentLogo
+            }
+
+            tempAllChannels.add(channelData)
+
+            tempCategoryMap
+                .getOrPut(currentGroup) { mutableListOf() }
+                .add(channelData)
+        }
+    }
 }
-                        if (currentName.isNotEmpty()) {
-                            // إنشاء كائن القناة
-                            val channelData = newLiveSearchResponse(currentName, line, TvType.Live) {
-    this.posterUrl = currentLogo
-}
-
-                            // إضافته للقائمة العامة (للبحث)
-                            tempAllChannels.add(channelData)
-
-                            // إضافته للخريطة (للصفحة الرئيسية)
-                            if (tempCategoryMap.containsKey(currentGroup)) {
-                                tempCategoryMap[currentGroup]?.add(channelData)
-                            } else {
-                                tempCategoryMap[currentGroup] = mutableListOf(channelData)
-                            }
-                        }
-                    }
                 }
                 scanner.close()
                 response.close()
