@@ -32,7 +32,7 @@ class VipTV : MainAPI() {
     // دالة مساعدة لتحميل البيانات (تُستدعى مرة واحدة فقط)
     private suspend fun fetchAndParseChannelsIfNeeded() {
         if (cachedChannels.isNotEmpty()) return // إذا كانت البيانات موجودة، لا تفعل شيئاً
-
+        var currentLogo: String? = null
         val tempAllChannels = mutableListOf<SearchResponse>()
         val tempCategoryMap = mutableMapOf<String, MutableList<SearchResponse>>()
 
@@ -50,15 +50,19 @@ class VipTV : MainAPI() {
                     val line = scanner.nextLine().trim()
 
                     if (line.startsWith("#EXTINF")) {
-                        val groupMatch = Regex("group-title=\"(.*?)\"").find(line)
-                        currentGroup = groupMatch?.groupValues?.get(1) ?: "Uncategorized"
-                        currentName = line.substringAfterLast(",").trim()
-                    } else if (line.startsWith("http")) {
+    val groupMatch = Regex("group-title=\"(.*?)\"").find(line)
+    currentGroup = groupMatch?.groupValues?.get(1) ?: "Uncategorized"
+
+    val logoMatch = Regex("tvg-logo=\"(.*?)\"").find(line)
+    currentLogo = logoMatch?.groupValues?.get(1)
+
+    currentName = line.substringAfterLast(",").trim()
+}
                         if (currentName.isNotEmpty()) {
                             // إنشاء كائن القناة
                             val channelData = newLiveSearchResponse(currentName, line, TvType.Live) {
-                                this.posterUrl = null
-                            }
+    this.posterUrl = currentLogo
+}
 
                             // إضافته للقائمة العامة (للبحث)
                             tempAllChannels.add(channelData)
