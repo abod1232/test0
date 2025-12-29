@@ -47,38 +47,43 @@ class VipTV : MainAPI() {
                 var currentName = ""
 
                 while (scanner.hasNextLine()) {
-    val line = scanner.nextLine().trim()
+                    val line = scanner.nextLine().trim()
 
-    if (line.startsWith("#EXTINF")) {
+                    if (line.startsWith("#EXTINF")) {
 
-        val groupMatch = Regex("group-title=\"(.*?)\"").find(line)
-        currentGroup = groupMatch?.groupValues?.get(1) ?: "Uncategorized"
+                        val groupMatch = Regex("group-title=\"(.*?)\"").find(line)
+                        currentGroup = groupMatch?.groupValues?.get(1) ?: "Uncategorized"
 
-        val logoMatch = Regex("tvg-logo=\"(.*?)\"").find(line)
-        currentLogo = logoMatch?.groupValues?.get(1)
+                        val logoMatch = Regex("tvg-logo=\"(.*?)\"").find(line)
+                        currentLogo = logoMatch?.groupValues?.get(1)
 
-        currentName = line.substringAfterLast(",").trim()
+                        currentName = line.substringAfterLast(",").trim()
 
-    } else if (line.startsWith("http")) {
+                    } else if (line.startsWith("http")) {
 
-        if (currentName.isNotEmpty()) {
+                        if (currentName.isNotEmpty()) {
 
-            val channelData = newLiveSearchResponse(currentName, line, TvType.Live) {
-                this.posterUrl = currentLogo
-            }
+                            val channelData = newLiveSearchResponse(currentName, line, TvType.Live) {
+                                this.posterUrl = currentLogo
+                            }
 
-            tempAllChannels.add(channelData)
+                            tempAllChannels.add(channelData)
 
-            tempCategoryMap
-                .getOrPut(currentGroup) { mutableListOf() }
-                .add(channelData)
-        }
-    }
-}
+                            tempCategoryMap
+                                .getOrPut(currentGroup) { mutableListOf() }
+                                .add(channelData)
+
+                            // بعد إنشاء القناة نفضّل إعادة تعيين currentName حتى لا يتم تكرارها
+                            currentName = ""
+                            currentLogo = null
+                        }
+                    }
                 }
+
                 scanner.close()
-                response.close()
             }
+
+            response.close()
 
             // حفظ النتائج في المتغيرات الثابتة (Static)
             cachedChannels = tempAllChannels
@@ -131,16 +136,13 @@ class VipTV : MainAPI() {
             name = name,
             url = url,          // رابط الصفحة
             dataUrl = url,      // رابط البث الحقيقي
-            type = TvType.Movie // ✅ هذا هو المطلوب
+            type = TvType.Movie // ✅ هذا هو المطلوب حسب رغبتك
         ) {
             this.posterUrl = null
             this.plot = "IPTV Live Channel"
             this.tags = listOf("Live", "IPTV")
         }
     }
-
-
-
 
     override suspend fun loadLinks(
         data: String,
