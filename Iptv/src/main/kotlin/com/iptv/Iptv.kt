@@ -83,7 +83,7 @@ class VipTV : MainAPI() {
                 "&language_flag_id=$languageId"
 
             val res = app.get(url, headers = authHeaders())
-                .parsedSafe<ViuResponse>() ?: return HomePageResponse(emptyList())
+                .parsedSafe<ViuResponse>() ?: return newHomePageResponse(emptyList())
 
             val items = res.data?.items?.mapNotNull { it.toSearch() } ?: emptyList()
 
