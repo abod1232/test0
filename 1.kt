@@ -12,15 +12,19 @@ override suspend fun search(query: String): List<SearchResponse> {
 
     val results = ArrayList<SearchResponse>()
 
-    // ===== SERIES =====
+    // =======================
+    // 📺 SERIES
+    // =======================
     resp.data?.series?.forEach { item ->
         val seriesId = item.seriesId ?: item.id ?: return@forEach
         val title = item.seriesName ?: item.name ?: return@forEach
 
+        val dataUrl = "$mainUrl/load?type=series&id=$seriesId"
+
         results.add(
             newTvSeriesSearchResponse(
                 title,
-                "viu://series/$seriesId",
+                dataUrl,
                 TvType.TvSeries
             ) {
                 posterUrl = item.coverImage ?: item.posterUrl
@@ -28,15 +32,19 @@ override suspend fun search(query: String): List<SearchResponse> {
         )
     }
 
-    // ===== MOVIES =====
+    // =======================
+    // 🎬 MOVIES
+    // =======================
     resp.data?.movies?.forEach { item ->
         val productId = item.productId ?: return@forEach
         val title = item.name ?: item.title ?: return@forEach
 
+        val dataUrl = "$mainUrl/load?type=movie&id=$productId"
+
         results.add(
             newMovieSearchResponse(
                 title,
-                "viu://movie/$productId",
+                dataUrl,
                 TvType.Movie
             ) {
                 posterUrl = item.coverImage ?: item.posterUrl
@@ -48,16 +56,15 @@ override suspend fun search(query: String): List<SearchResponse> {
 }
 
 
+
 override suspend fun load(url: String): LoadResponse? {
-    if (!url.startsWith("viu://")) return null
-
     val headers = getAuthenticatedHeaders()
-    val parts = url.removePrefix("viu://").split("/")
 
-    if (parts.size < 2) return null
+    // Cloudstream-safe parsing
+    val uri = android.net.Uri.parse(url)
 
-    val type = parts[0]
-    val id = parts[1]
+    val type = uri.getQueryParameter("type") ?: return null
+    val id = uri.getQueryParameter("id") ?: return null
 
     // ==========================================================
     // 🎬 MOVIE
@@ -72,7 +79,8 @@ override suspend fun load(url: String): LoadResponse? {
             .parsedSafe<ViuDetailResponse>()
             ?: return null
 
-        val product = resp.data?.product ?: resp.data?.currentProduct ?: return null
+        val product =
+            resp.data?.product ?: resp.data?.currentProduct ?: return null
 
         return newMovieLoadResponse(
             product.name ?: "Unknown",
@@ -89,8 +97,6 @@ override suspend fun load(url: String): LoadResponse? {
     // 📺 SERIES
     // ==========================================================
     if (type == "series") {
-
-        // 1️⃣ جلب الحلقات مباشرة (بدون product-detail)
         val epUrl =
             "$mobileApiUrl?platform_flag_label=phone&os_flag_id=2" +
             "&r=/vod/product-list&series_id=$id&size=1000" +
@@ -100,33 +106,30 @@ override suspend fun load(url: String): LoadResponse? {
             .parsedSafe<ViuEpisodeListResponse>()
             ?: return null
 
-        val episodes = epResp.data?.products
-            ?.mapNotNull { ep ->
-                val pid = ep.productId ?: return@mapNotNull null
+        val products = epResp.data?.products ?: return null
+        if (products.isEmpty()) return null
 
-                newEpisode(pid) {
-                    name = ep.synopsis ?: "Episode ${ep.number}"
-                    episode = ep.number?.toIntOrNull()
-                    posterUrl = ep.coverImage
-                }
+        val episodes = products.mapNotNull { ep ->
+            val pid = ep.productId ?: return@mapNotNull null
+
+            newEpisode(pid) {
+                name = ep.synopsis ?: "Episode ${ep.number}"
+                episode = ep.number?.toIntOrNull()
+                posterUrl = ep.coverImage
             }
-            ?.sortedBy { it.episode }
-            ?: emptyList()
+        }.sortedBy { it.episode }
 
-        if (episodes.isEmpty()) return null
-
-        // 2️⃣ نأخذ بيانات السلسلة من أول حلقة
-        val first = epResp.data?.products?.firstOrNull()
+        val first = products.first()
 
         return newTvSeriesLoadResponse(
-            first?.seriesName ?: "Unknown",
+            first.seriesName ?: "Unknown",
             url,
             TvType.TvSeries,
             episodes
         ) {
-            posterUrl = first?.seriesCoverLandscapeImageUrl
-                ?: first?.coverImage
-            plot = first?.description ?: first?.synopsis
+            posterUrl = first.seriesCoverLandscapeImageUrl
+                ?: first.coverImage
+            plot = first.description ?: first.synopsis
         }
     }
 
