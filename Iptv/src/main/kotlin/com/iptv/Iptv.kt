@@ -374,19 +374,21 @@ class VipTV : MainAPI() {
             } else {
                 println("[VIU-DEBUG] Found ${streams.size} video qualities.")
                 streams.entries
-                    .forEach { (qualityName, streamUrl) ->
+    .sortedBy { getQualityFromName(it.key) } // ترتيب من الأقل للأعلى
+    .reversed()                              // عكس الترتيب (الأعلى أولاً)
+    .forEach { (qualityName, streamUrl) ->
 
-                        callback(
-                            newExtractorLink(
-                                source = name,
-                                name = "Viu ${qualityName.uppercase()}",
-                                url = streamUrl
-                            ) {
-                                referer = "https://www.viu.com/"
-                                quality = getQualityFromName(qualityName)
-                            }
-                        )
-                    }
+        callback(
+            newExtractorLink(
+                source = name,
+                name = "Viu ${qualityName.uppercase()}",
+                url = streamUrl
+            ) {
+                referer = "https://www.viu.com/"
+                quality = getQualityFromName(qualityName)
+            }
+        )
+    }
 
             }
 
