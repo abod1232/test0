@@ -108,7 +108,7 @@ class VipTV : MainAPI() {
                 "&countryCode=$countryCode"
 
         val response = app.get(url, headers = headers).parsedSafe<ViuHomeResponse>()
-        val data = response?.data ?: return HomePageResponse(items)
+        val data = response?.data ?: return newHomePageResponse(items)
 
         // 1️⃣ معالجة البانر (Banners)
         if (!data.banners.isNullOrEmpty()) {
@@ -128,7 +128,7 @@ class VipTV : MainAPI() {
             }
         }
 
-        return HomePageResponse(items)
+        return newHomePageResponse(items)
     }
 
     // دالة مساعدة لتحويل العنصر من JSON إلى SearchResponse
