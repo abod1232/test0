@@ -374,10 +374,8 @@ class VipTV : MainAPI() {
             } else {
                 println("[VIU-DEBUG] Found ${streams.size} video qualities.")
                 streams.entries
-    .sortedBy { getQualityFromName(it.key) } // ترتيب من الأقل للأعلى
-    .reversed()                              // عكس الترتيب (الأعلى أولاً)
+    .sortedByDescending { getQualityFromName(it.key) }
     .forEach { (qualityName, streamUrl) ->
-
         callback(
             newExtractorLink(
                 source = name,
