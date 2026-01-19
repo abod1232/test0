@@ -373,20 +373,23 @@ class VipTV : MainAPI() {
                 println("[VIU-DEBUG] ❌ No video streams found!")
             } else {
                 println("[VIU-DEBUG] Found ${streams.size} video qualities.")
-                streams.entries
-    .sortedByDescending { getQualityFromName(it.key) }
-    .forEach { (qualityName, streamUrl) ->
-        callback(
-            newExtractorLink(
-                source = name,
-                name = "Viu ${qualityName.uppercase()}",
-                url = streamUrl
-            ) {
-                referer = "https://www.viu.com/"
-                quality = getQualityFromName(qualityName)
-            }
-        )
-    }
+                streams.entries.forEach { (qualityName, streamUrl) ->
+
+    val realQuality = getQualityFromName(qualityName)
+
+    callback(
+        newExtractorLink(
+            source = name,
+            name = "Viu ${qualityName.uppercase()}",
+            url = streamUrl
+        ) {
+            referer = "https://www.viu.com/"
+
+            // 🔥 خدعة عكس الترتيب
+            quality = 10000 - realQuality
+        }
+    )
+}
 
             }
 
