@@ -7,13 +7,14 @@ import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 
 @CloudstreamPlugin
-class eishkPlugin : Plugin() {
+class IptvPlugin : Plugin() {
 
     override fun load(context: Context) {
 
-        // ✅ تصحيح اسم الكلاس
+        // تسجيل الـ Provider
         registerMainAPI(VipTV())
 
+        // SharedPreferences (مسموح هنا)
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
 
         openSettings = { activityContext ->
