@@ -1,20 +1,15 @@
 [
     {
-        "iconUrl": "https://www.google.com/s2/favicons?domain=cimanow.cc&sz=%size%",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/abod1232/test0",
-        "status": 1,
-        "language": "ar",
+        "fileSize": 12837,
+        "status": 3,
         "authors": [
-            "ImZaw"
+            
         ],
-        "tvTypes": [
-            "TvSeries",
-            "Movie"
-        ],
-        "version": 1,
-        "internalName": "Iptv",
-        "url": "https://raw.githubusercontent.com/abod1232/test0/builds/Iptv.cs3",
-        "name": "Iptv"
+        "version": -1,
+        "internalName": "Cimawbas",
+        "url": "https://raw.githubusercontent.com/abod1232/test0/builds/Cimawbas.cs3",
+        "name": "Cimawbas"
     }
 ]
