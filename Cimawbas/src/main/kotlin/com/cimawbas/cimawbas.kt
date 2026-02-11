@@ -1,135 +1,167 @@
-package com.lagradost.cloudstream3.plugins
+package com.lagradost.cloudstream3.arabic
 
+import android.util.Base64
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 
-class CimaWbas : MainAPI() {
-    override var mainUrl = "https://cimawbas.org"
-    override var name = "CimaWbas"
+class TukTukHd : ParsableHttpSource() {
+
+    override val name = "TukTuk Cinema"
+    override val mainUrl = "https://tuktukhd.com"
+    override val lang = "ar"
     override val hasMainPage = true
-    override var lang = "ar"
-    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.AsianDrama, TvType.Anime)
 
-    // تعريف الكوكيز
-    private val protectionCookies = mapOf(
-        "cf_clearance" to "GiTICM7SfHnNeeQxFszUi6XGBJzKoYvgkT2h2DXES5M-1765287006-1.2.1.1-ctTEI.mzBsUuaEtOPYncQ4g5uz7A8cRI7qRC8cqtgMGxT4jVIbP_HhezALFn7AlvA6yItStB.wCPDBHz_ru1iQLXBn_vpqrxBCgehb64e9kWRp.eijz93Rd7529f4fjNPxlqYf1ap3TRx3ZdrPHlTpSur5Cq1iMr46YK66kHynR1q0Mth.uHz.ljEGVoLbgMDM0kq3gjI8ZX6FIMNzyiU0l1evRncj4uAdegEZ588yg"
-    )
-
+    // الصفحة الرئيسية تحتوي على عدة أقسام، سنقوم بجلب "الأحدث" والأقسام المميزة
     override val mainPage = mainPageOf(
-        "$mainUrl/movies/page/" to "أفلام",
-        "$mainUrl/series/page/" to "مسلسلات",
-        "$mainUrl/category/%d8%a7%d9%81%d9%84%d8%a7%d9%85-%d8%a7%d9%86%d9%85%d9%8a/page/" to "أفلام أنمي",
-        "$mainUrl/category/%d9%85%d8%b3%d9%84%d8%b3%d9%84%d8%a7%d8%aa-%d8%a7%d9%86%d9%85%d9%8a/page/" to "مسلسلات أنمي",
-        "$mainUrl/last/page/" to "أضيف حديثاً"
+        "$mainUrl/recent/page/" to "المضاف حديثاً",
+        "$mainUrl/category/movies-2/page/" to "أحدث الأفلام",
+        "$mainUrl/category/series-1/page/" to "أحدث الحلقات",
     )
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = request.data + page
-        val document = app.get(url, cookies = protectionCookies).document
-        val home = document.select("li.Small--Box").mapNotNull {
-            toSearchResult(it)
-        }
-        return newHomePageResponse(request.name, home)
-    }
+    // تحليل عناصر القائمة (في الصفحة الرئيسية والبحث)
+    override fun mainPageOf(data: String, element: Element): List<SearchResponse>? {
+        return element.select(".Block--Item").mapNotNull {
+            val linkTag = it.selectFirst("a") ?: return@mapNotNull null
+            val title = it.selectFirst(".title")?.text() ?: linkTag.attr("title")
+            val href = linkTag.attr("href")
+            
+            // التعامل مع الصور (Lazy Load)
+            val imgTag = it.selectFirst(".Poster--Block img")
+            val posterUrl = imgTag?.attr("data-src") 
+                ?: imgTag?.attr("src") 
+                ?: "https://tuktukhd.com/wp-content/themes/TukTukCinema3/no.png"
 
-    private fun toSearchResult(element: Element): SearchResponse? {
-        val title = element.select("h3.title").text().trim()
-        val url = element.select("a").attr("href")
-        val posterUrl = element.select(".Poster img").let {
-            it.attr("data-src").ifEmpty { it.attr("src") }
-        }
-        val quality = element.select(".ribbon span").text().trim()
+            // التحقق من نوع المحتوى
+            val isMovie = !title.contains("مسلسل") && !title.contains("حلقة")
 
-        return newMovieSearchResponse(title, url, TvType.Movie) {
-            this.posterUrl = posterUrl
-            this.quality = getQualityFromString(quality)
-        }
-    }
-
-    override suspend fun search(query: String): List<SearchResponse> {
-        val url = "$mainUrl/?s=$query"
-        val document = app.get(url, cookies = protectionCookies).document
-        return document.select("li.Small--Box").mapNotNull {
-            toSearchResult(it)
-        }
-    }
-
-    override suspend fun load(url: String): LoadResponse {
-        val doc = app.get(url, cookies = protectionCookies).document
-
-        val title = doc.select("h1.PostTitle").text().trim()
-        val poster = doc.select(".left .image img").let {
-            it.attr("data-src").ifEmpty { it.attr("src") }
-        }
-        val description = doc.select(".StoryArea p").text().trim()
-        val year = doc.select(".TaxContent a[href*='release-year']").text().trim().toIntOrNull()
-        val score = doc.select(".imdbR span").text()
-    .trim()
-    .toFloatOrNull()
-        val tags = doc.select(".TaxContent .genre a").map { it.text() }
-
-        // Check if it is a Series or Movie
-        val episodes = doc.select(".allepcont .row a")
-
-        if (episodes.isNotEmpty()) {
-            val episodeList = episodes.map { ep ->
-                val epTitle = ep.select(".ep-info h2").text()
-                val epUrl = ep.attr("href")
-                val epThumb = ep.select("img").let { it.attr("data-src").ifEmpty { it.attr("src") } }
-                val epNum = ep.select(".epnum").text().replace(Regex("[^0-9]"), "").toIntOrNull()
-
-                newEpisode(epUrl) {
-                    this.name = epTitle
-                    this.posterUrl = epThumb
-                    this.episode = epNum
+            if (isMovie) {
+                newMovieSearchResponse(title, href, TvType.Movie) {
+                    this.posterUrl = posterUrl
+                }
+            } else {
+                newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+                    this.posterUrl = posterUrl
                 }
             }
-            return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodeList) {
-                this.posterUrl = poster
-                this.year = year
-                this.plot = description
-                this.tags = tags
-            }
-        } else {
-            return newMovieLoadResponse(title, url, TvType.Movie, url) {
-                this.posterUrl = poster
-                this.year = year
-                this.plot = description
-                this.tags = tags
+        }
+    }
+
+    // وظيفة البحث
+    override suspend fun search(query: String): List<SearchResponse> {
+        // الموقع يستخدم ?s=QUERY
+        return app.get("$mainUrl/?s=$query").document.select(".Block--Item").mapNotNull {
+            val linkTag = it.selectFirst("a") ?: return@mapNotNull null
+            val title = it.selectFirst(".title")?.text() ?: linkTag.attr("title")
+            val href = linkTag.attr("href")
+            val imgTag = it.selectFirst(".Poster--Block img")
+            val posterUrl = imgTag?.attr("data-src") ?: imgTag?.attr("src")
+
+            newMovieSearchResponse(title, href, TvType.Movie) {
+                this.posterUrl = posterUrl
             }
         }
     }
 
-    // --- التعديل هنا ---
+    // جلب تفاصيل الفيلم أو المسلسل
+    override suspend fun load(url: String): LoadResponse {
+        val doc = app.get(url).document
+
+        val title = doc.selectFirst("h1.post-title a")?.text() ?: doc.selectFirst("h1")?.text() ?: "Unknown"
+        val desc = doc.select(".story p").text()
+        val poster = doc.selectFirst(".MainSingle .left .image img")?.attr("src")
+        val bgPoster = doc.selectFirst(".homepage__bg")?.attr("style")?.substringAfter("url(")?.substringBefore(")") 
+            ?: poster
+
+        val year = doc.select(".RightTaxContent a[href*='release-year']").text().filter { it.isDigit() }.toIntOrNull()
+        val rating = doc.select(".imdbS strong").text().toDoubleOrNull()
+
+        // تحديد النوع بناءً على الأقسام أو العنوان
+        val isSeries = url.contains("series") || title.contains("مسلسل") || doc.select(".allepcont").isNotEmpty()
+
+        if (isSeries) {
+            // جلب الحلقات
+            val episodes = ArrayList<Episode>()
+            
+            // في ملف HTML الخاص بالمسلسلات، الحلقات موجودة داخل .allepcont a
+            doc.select(".allepcont a").forEach { ep ->
+                val epTitle = ep.select(".ep-info h2").text()
+                val epHref = ep.attr("href")
+                val epNum = ep.select(".epnum").text().filter { it.isDigit() }.toIntOrNull()
+                val epThumb = ep.select("img").attr("data-src").ifEmpty { ep.select("img").attr("src") }
+
+                episodes.add(
+                    newEpisode(epHref) {
+                        this.name = epTitle
+                        this.episode = epNum
+                        this.posterUrl = epThumb
+                    }
+                )
+            }
+            // ترتيب الحلقات
+            return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes.reversed()) {
+                this.posterUrl = poster
+                this.backgroundPoster = bgPoster
+                this.plot = desc
+                this.year = year
+                this.rating = rating.toRatingInt()
+            }
+        } else {
+            // فيلم
+            return newMovieLoadResponse(title, url, TvType.Movie, url) {
+                this.posterUrl = poster
+                this.backgroundPoster = bgPoster
+                this.plot = desc
+                this.year = year
+                this.rating = rating.toRatingInt()
+            }
+        }
+    }
+
+    // استخراج روابط المشاهدة
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // 1. جلب الصفحة التي تم تمريرها (صفحة الفيلم الرئيسية)
-        val doc = app.get(data, cookies = protectionCookies).document
+        val doc = app.get(data).document
 
-        // 2. البحث عن رابط زر "مشاهدة الآن" (الذي يحمل كلاس watch)
-        // هذا الزر ينقلنا من صفحة المعلومات إلى صفحة السيرفرات
-        val watchButtonUrl = doc.select("a.watch").attr("href")
-
-
-        val targetDoc = if (watchButtonUrl.isNotBlank()) {
-            app.get(watchButtonUrl, cookies = protectionCookies).document
-        } else {
-            doc
+        // الطريقة 1: البحث عن Iframe الذي يحتوي على data-crypt (مشفر Base64)
+        // موجود في tuktukloadmovie.html
+        val iframeCrypt = doc.select("iframe#main-video-frame").attr("data-crypt")
+        if (iframeCrypt.isNotEmpty()) {
+            try {
+                // فك التشفير Base64
+                val decodedUrl = String(Base64.decode(iframeCrypt, Base64.DEFAULT))
+                loadExtractor(decodedUrl, callback, subtitleCallback)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
 
-        // 4. استخراج السيرفرات من القائمة ul id="watch" والخاصية data-watch
-        targetDoc.select("ul#watch li").forEach { server ->
-            val embedUrl = server.attr("data-watch")
-            if (embedUrl.isNotBlank()) {
-                // إرسال الرابط لـ loadExtractor لاستخراج الفيديو الحقيقي
-                loadExtractor(embedUrl, subtitleCallback, callback)
+        // الطريقة 2: قائمة السيرفرات (watch--servers--list)
+        // قد تحتوي على روابط مباشرة أو مشفرة أخرى
+        doc.select(".watch--servers--list ul li").forEach { server ->
+            val dataLink = server.attr("data-link")
+            if (dataLink.isNotEmpty()) {
+                // ملاحظة: أحياناً data-link يكون مشفراً بطريقة معقدة، لكن إذا كان Base64 بسيط نجرب فكه
+                // أو إذا كان هناك طلب AJAX يتم إرساله (Go.php في الملف المرفق)
+                // بناءً على الملف، هناك رابط "go.php" يستخدم data-real-url للتحميل، يمكن استخدامه أيضاً
             }
+        }
+        
+        // الطريقة 3: روابط التحميل المباشرة (Megamax في المثال)
+        doc.select("a.smart-external-link").forEach { downloadLink ->
+             val realUrlEncrypted = downloadLink.attr("data-real-url")
+             if(realUrlEncrypted.contains("go.php?u=")) {
+                 val hash = realUrlEncrypted.substringAfter("u=")
+                 try {
+                     val decoded = String(Base64.decode(hash, Base64.DEFAULT))
+                     loadExtractor(decoded, callback, subtitleCallback)
+                 } catch (e: Exception) {}
+             }
         }
 
         return true
