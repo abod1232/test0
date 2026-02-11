@@ -91,7 +91,6 @@ class CimaWbas : MainAPI() {
                 this.year = year
                 this.plot = description
                 this.tags = tags
-                this.score = score
             }
         } else {
             return newMovieLoadResponse(title, url, TvType.Movie, url) {
@@ -99,7 +98,6 @@ class CimaWbas : MainAPI() {
                 this.year = year
                 this.plot = description
                 this.tags = tags
-                this.score = score
             }
         }
     }
