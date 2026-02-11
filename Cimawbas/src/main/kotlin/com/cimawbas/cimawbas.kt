@@ -65,7 +65,9 @@ class CimaWbas : MainAPI() {
         }
         val description = doc.select(".StoryArea p").text().trim()
         val year = doc.select(".TaxContent a[href*='release-year']").text().trim().toIntOrNull()
-        val rating = doc.select(".imdbR span").text().trim().toRatingInt()
+        val score = doc.select(".imdbR span").text()
+    .trim()
+    .toFloatOrNull()
         val tags = doc.select(".TaxContent .genre a").map { it.text() }
 
         // Check if it is a Series or Movie
@@ -89,7 +91,7 @@ class CimaWbas : MainAPI() {
                 this.year = year
                 this.plot = description
                 this.tags = tags
-                this.rating = rating
+                this.score = score
             }
         } else {
             return newMovieLoadResponse(title, url, TvType.Movie, url) {
@@ -97,7 +99,7 @@ class CimaWbas : MainAPI() {
                 this.year = year
                 this.plot = description
                 this.tags = tags
-                this.rating = rating
+                this.score = score
             }
         }
     }
