@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
+import com.lagradost.cloudstream3.newAudioFile
 
 class CimaWbas : MainAPI() {
     override var mainUrl = "https://cimawbas.org"
@@ -98,6 +99,7 @@ class CimaWbas : MainAPI() {
                 this.year = year
                 this.plot = description
                 this.tags = tags
+                
             }
         }
     }
