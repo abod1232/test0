@@ -1,8 +1,6 @@
 package com.youtube
 
-
 import android.annotation.SuppressLint
-import android.app.Dialog
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
@@ -65,15 +63,17 @@ class YoutubeSettingsBottomSheet : BottomSheetDialogFragment() {
 
             webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
-                    // يقفل تلقائيًا بعد تجاوز التحقق
-                    if (url != null && url.contains("anime3rb.com") && !url.contains("challenge")) {
+                    // يغلق تلقائيًا بعد تجاوز Cloudflare
+                    if (url != null &&
+                        url.contains("anime3rb.com") &&
+                        !url.contains("challenge")
+                    ) {
                         dismiss()
                     }
                 }
             }
 
             webView.loadUrl("https://anime3rb.com")
-
             return webView
         }
 
@@ -104,7 +104,7 @@ class YoutubeSettingsBottomSheet : BottomSheetDialogFragment() {
 
     companion object {
         fun show(fm: FragmentManager) {
-            AnimeSettingsBottomSheet().show(fm, "anime_settings")
+            YoutubeSettingsBottomSheet().show(fm, "anime_settings")
         }
     }
 }
