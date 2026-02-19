@@ -16,6 +16,9 @@ import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 
 class YoutubeSettingsBottomSheet : BottomSheetDialogFragment() {
 
+    // =========================
+    // Preferences Fragment
+    // =========================
     class PrefsFragment : PreferenceFragmentCompat() {
 
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
@@ -38,6 +41,9 @@ class YoutubeSettingsBottomSheet : BottomSheetDialogFragment() {
         }
     }
 
+    // =========================
+    // WebView Dialog
+    // =========================
     class CloudflareWebViewDialog : DialogFragment() {
 
         @SuppressLint("SetJavaScriptEnabled")
@@ -63,7 +69,7 @@ class YoutubeSettingsBottomSheet : BottomSheetDialogFragment() {
 
             webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
-                    // يغلق تلقائيًا بعد تجاوز Cloudflare
+                    // يغلق بعد تجاوز Cloudflare
                     if (url != null &&
                         url.contains("anime3rb.com") &&
                         !url.contains("challenge")
@@ -86,6 +92,9 @@ class YoutubeSettingsBottomSheet : BottomSheetDialogFragment() {
         }
     }
 
+    // =========================
+    // BottomSheet Setup
+    // =========================
     override fun onCreateView(
         inflater: android.view.LayoutInflater,
         container: ViewGroup?,
