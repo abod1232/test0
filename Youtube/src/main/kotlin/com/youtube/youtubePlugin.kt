@@ -25,7 +25,7 @@ class YoutubeTokenPlugin: Plugin() {
 
         openSettings = { ctx ->
             val activity = ctx as AppCompatActivity
-            com.youtube.YoutubeSettingsBottomSheet.show(activity.supportFragmentManager, sharedPref)
+            com.youtube.YoutubeSettingsBottomSheet.show(activity.supportFragmentManager)
 
         }
     }
