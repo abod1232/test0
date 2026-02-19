@@ -46,74 +46,77 @@ class YoutubeSettingsBottomSheet : BottomSheetDialogFragment() {
     // =========================
     class CloudflareWebViewDialog : DialogFragment() {
 
-        @SuppressLint("SetJavaScriptEnabled")
-        override fun onCreateView(
-            inflater: android.view.LayoutInflater,
-            container: ViewGroup?,
-            savedInstanceState: Bundle?
-        ): View {
+    private lateinit var webView: WebView
+    private lateinit var statusView: TextView
 
-            val webView = WebView(requireContext())
-
-            webView.settings.apply {
-                javaScriptEnabled = true
-                domStorageEnabled = true
-                userAgentString =
-                    "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"
-            }
-
-            CookieManager.getInstance().apply {
-                setAcceptCookie(true)
-                setAcceptThirdPartyCookies(webView, true)
-            }
-
-            webView.webViewClient = object : WebViewClient() {
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    // يغلق بعد تجاوز Cloudflare
-                    if (url != null &&
-                        url.contains("anime3rb.com") &&
-                        !url.contains("challenge")
-                    ) {
-                        dismiss()
-                    }
-                }
-            }
-
-            webView.loadUrl("https://anime3rb.com")
-            return webView
-        }
-
-        override fun onStart() {
-            super.onStart()
-            dialog?.window?.setLayout(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        }
-    }
-
-    // =========================
-    // BottomSheet Setup
-    // =========================
+    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreateView(
         inflater: android.view.LayoutInflater,
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
-        val containerView = FragmentContainerView(requireContext())
-        containerView.id = View.generateViewId()
-        return containerView
-    }
 
-    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        childFragmentManager.beginTransaction()
-            .replace(view.id, PrefsFragment())
-            .commit()
-    }
+        val ctx = requireContext()
 
-    companion object {
-        fun show(fm: FragmentManager) {
-            YoutubeSettingsBottomSheet().show(fm, "anime_settings")
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = ViewGroup.LayoutParams(-1, -1)
         }
+
+        statusView = TextView(ctx).apply {
+            text = "جاري تحميل الموقع..."
+            setPadding(16, 16, 16, 16)
+            setBackgroundColor(0xFFEEEEEE.toInt())
+        }
+
+        webView = WebView(ctx)
+
+        webView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            userAgentString =
+                "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"
+        }
+
+        CookieManager.getInstance().apply {
+            setAcceptCookie(true)
+            setAcceptThirdPartyCookies(webView, true)
+        }
+
+        webView.webViewClient = object : WebViewClient() {
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                if (url == null) return
+
+                when {
+                    url.contains("challenge") || url.contains("cloudflare") ->
+                        statusView.text = "⚠ تم اكتشاف تحقق Cloudflare — أكمله يدويًا"
+
+                    url.contains("anime3rb.com") ->
+                        statusView.text = "✅ الموقع مفتوح — تم تجاوز Cloudflare"
+                }
+            }
+        }
+
+        webView.loadUrl("https://anime3rb.com")
+
+        val closeBtn = Button(ctx).apply {
+            text = "إغلاق"
+            setOnClickListener { dismiss() }
+        }
+
+        root.addView(statusView)
+        root.addView(closeBtn, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(webView, ViewGroup.LayoutParams(-1, 0, 1f))
+
+        return root
+    }
+
+    override fun onStart() {
+        super.onStart()
+        dialog?.window?.setLayout(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        )
     }
 }
