@@ -185,14 +185,14 @@ class YoutubeSettingsBottomSheet : BottomSheetDialogFragment() {
 
             val scroll = ScrollView(requireContext())
             val text = TextView(requireContext()).apply {
-                setPadding(20, 20, 20, 20)
-                textIsSelectable = true
-                textSize = 12f
-                this.text =
-                    if (response.length > 10000)
-                        response.substring(0, 10000) + "\n...\n(تم قص النص)"
-                    else response
-            }
+    setPadding(20, 20, 20, 20)
+    setTextIsSelectable(true)
+    textSize = 12f
+    this.text =
+        if (response.length > 10000)
+            response.substring(0, 10000) + "\n...\n(تم قص النص)"
+        else response
+}
 
             scroll.addView(text)
 
@@ -234,4 +234,5 @@ class YoutubeSettingsBottomSheet : BottomSheetDialogFragment() {
         }
     }
 }
+
 
