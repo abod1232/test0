@@ -57,22 +57,16 @@ class CimaWbas : MainAPI() {
     }
 
     // دالة مساعدة لطلبات POST تمنع الكاش نهائياً
-    private suspend fun httpPost(url: String, data: Map<String, String>, customHeaders: Map<String, String> = emptyMap(), timeout: Long = 15000L): AppResponse {
-        val noCacheHeaders = mapOf(
-            "Cache-Control" to "no-cache",
-            "Pragma" to "no-cache"
-        )
-        val mergedHeaders = standardHeaders + customHeaders + noCacheHeaders
-        
-        return app.post(
+    // دالة مساعدة لطلبات POST تمنع الكاش نهائياً
+    private suspend fun httpPost(url: String, data: Map<String, String>, customHeaders: Map<String, String> = emptyMap(), timeout: Long = 15000L) = 
+        app.post(
             url, 
             data = data, 
-            headers = mergedHeaders, 
+            headers = standardHeaders + customHeaders + mapOf("Cache-Control" to "no-cache", "Pragma" to "no-cache"), 
             interceptor = cfInterceptor, 
             timeout = timeout,
-            cacheTime = 0 // <--- لمنع الكاش
+            cacheTime = 0
         )
-    }
     private fun extractNumbers(text: String?): Int? {
         if (text.isNullOrBlank()) return null
         return Regex("""\d+""").find(text)?.value?.toIntOrNull()
@@ -132,16 +126,6 @@ class CimaWbas : MainAPI() {
     //     Main Page
     // ================================
 
-    override val mainPage = mainPageOf(
-        "$mainUrl/" to "احدث الاضافات",
-        "$mainUrl/movies/" to "افلام جديدة",
-        "$mainUrl/series/" to "مسلسلات جديدة",
-        "$mainUrl/category/افلام-اجنبي/" to "افلام اجنبي",
-        "$mainUrl/category/مسلسلات-عربي/" to "مسلسلات عربي",
-        "$mainUrl/category/افلام-انمي/" to "أفلام أنمي",
-        "$mainUrl/category/مسلسلات-انمي/" to "مسلسلات أنمي",
-    )
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return try {
             val url = if (page > 1) {
@@ -163,7 +147,8 @@ class CimaWbas : MainAPI() {
                 isHorizontalImages = isBannerRequest
             )
 
-            HomePageResponse(listOf(homePageList))
+            // التعديل هنا: استخدام الطريقة الحديثة لدعم Cloudstream
+            newHomePageResponse(homePageList)
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load page $page for ${request.name}", e)
@@ -172,7 +157,9 @@ class CimaWbas : MainAPI() {
                 list = emptyList(),
                 isHorizontalImages = false
             )
-            HomePageResponse(listOf(homePageList))
+            
+            // التعديل هنا أيضاً
+            newHomePageResponse(homePageList)
         }
     }
 
