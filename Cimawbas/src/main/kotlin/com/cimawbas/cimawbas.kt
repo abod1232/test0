@@ -409,7 +409,7 @@ class CimaWbas : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // الطلب الأساسي للصفحة (الآن محمي بـ httpGet)
+        // الطلب الأساسي للصفحة (محمي بـ httpGet لمنع الكاش وتخطي Cloudflare)
         val document = try {
             httpGet(data)
         } catch (e: Exception) {
@@ -437,7 +437,7 @@ class CimaWbas : MainAPI() {
                 async {
                     val finalUrl = if (link.contains("govid.site")) {
                         try {
-                            // محمية بـ httpGet
+                            // محمية بـ httpGet لتخطي الحماية
                             val govidDoc = httpGet(link)
                             govidDoc.selectFirst("iframe")?.attr("src")
                         } catch (e: Exception) {
@@ -454,25 +454,9 @@ class CimaWbas : MainAPI() {
                         link
                     }
 
+                    // هنا تم إزالة الجزء الذي كان يسبب الخطأ (ExternalEarnVidsExtractor)
                     if (!finalUrl.isNullOrBlank()) {
                         loadExtractor(finalUrl, data, subtitleCallback, callback)
-
-                        if (serverName.equals("EarnVids", true) || serverName.equals("StreamHG", true)) {
-                            try {
-                                ExternalEarnVidsExtractor.extract(finalUrl, mainUrl)?.let { customLink ->
-                                    callback.invoke(
-                                        newExtractorLink(
-                                            this@MyCimaProvider.name,
-                                            "$serverName (مخصص)",
-                                            customLink,
-                                        ) {
-                                            this.quality = Qualities.Unknown.value
-                                        }
-                                    )
-                                }
-                            } catch (e: Exception) {
-                            }
-                        }
                     }
                 }
             }.awaitAll()
