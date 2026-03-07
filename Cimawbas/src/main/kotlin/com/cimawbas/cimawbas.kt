@@ -1,137 +1,494 @@
 package com.lagradost.cloudstream3.plugins
 
+import android.util.Base64
+import android.util.Log
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
-import com.lagradost.cloudstream3.newAudioFile
+import java.net.URLEncoder
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import org.jsoup.Jsoup
+import com.lagradost.cloudstream3.network.CloudflareKiller
+import okhttp3.Interceptor
 
 class CimaWbas : MainAPI() {
-    override var mainUrl = "https://cimawbas.org"
-    override var name = "CimaWbas"
-    override val hasMainPage = true
     override var lang = "ar"
-    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.AsianDrama, TvType.Anime)
+    override var mainUrl = "https://mycima.page"
+    override var name = "MyCima"
+    override val usesWebView = false
+    override val hasMainPage = true
+    override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie, TvType.Anime, TvType.AsianDrama)
 
-    // تعريف الكوكيز
-    private val protectionCookies = mapOf(
-        "cf_clearance" to "GiTICM7SfHnNeeQxFszUi6XGBJzKoYvgkT2h2DXES5M-1765287006-1.2.1.1-ctTEI.mzBsUuaEtOPYncQ4g5uz7A8cRI7qRC8cqtgMGxT4jVIbP_HhezALFn7AlvA6yItStB.wCPDBHz_ru1iQLXBn_vpqrxBCgehb64e9kWRp.eijz93Rd7529f4fjNPxlqYf1ap3TRx3ZdrPHlTpSur5Cq1iMr46YK66kHynR1q0Mth.uHz.ljEGVoLbgMDM0kq3gjI8ZX6FIMNzyiU0l1evRncj4uAdegEZ588yg"
+    companion object {
+        const val TAG = "MyCima"
+    }
+
+    // ================================
+    //     Cloudflare & HTTP Helpers
+    // ================================
+
+    private val cloudflareKiller by lazy { CloudflareKiller() }
+    private val cfInterceptor: Interceptor get() = cloudflareKiller
+
+    private val standardHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language" to "ar,en-US;q=0.9",
+        "Referer" to "$mainUrl/"
     )
 
+// دالة مساعدة لطلبات GET تمنع الكاش نهائياً
+    private suspend fun httpGet(url: String, customHeaders: Map<String, String> = emptyMap(), timeout: Long = 15000L): org.jsoup.nodes.Document {
+        // إضافة هيدرات تمنع السيرفر من إعطائنا 304
+        val noCacheHeaders = mapOf(
+            "Cache-Control" to "no-cache",
+            "Pragma" to "no-cache"
+        )
+        val mergedHeaders = standardHeaders + customHeaders + noCacheHeaders
+        
+        return app.get(
+            url, 
+            headers = mergedHeaders, 
+            interceptor = cfInterceptor, 
+            timeout = timeout,
+            cacheTime = 0 // <--- هذا السطر هو الأهم لمنع كاش Cloudstream الداخلي
+        ).document
+    }
+
+    // دالة مساعدة لطلبات POST تمنع الكاش نهائياً
+    private suspend fun httpPost(url: String, data: Map<String, String>, customHeaders: Map<String, String> = emptyMap(), timeout: Long = 15000L): AppResponse {
+        val noCacheHeaders = mapOf(
+            "Cache-Control" to "no-cache",
+            "Pragma" to "no-cache"
+        )
+        val mergedHeaders = standardHeaders + customHeaders + noCacheHeaders
+        
+        return app.post(
+            url, 
+            data = data, 
+            headers = mergedHeaders, 
+            interceptor = cfInterceptor, 
+            timeout = timeout,
+            cacheTime = 0 // <--- لمنع الكاش
+        )
+    }
+    private fun extractNumbers(text: String?): Int? {
+        if (text.isNullOrBlank()) return null
+        return Regex("""\d+""").find(text)?.value?.toIntOrNull()
+    }
+
+    private fun String.safeBase64Decode(): String {
+        return try {
+            String(Base64.decode(this, Base64.DEFAULT), Charsets.UTF_8)
+        } catch (e: Exception) { "" }
+    }
+
+    private fun getPosterFromStyle(element: Element?): String? {
+        val style = element?.attr("style")?.ifBlank { null } ?: element?.attr("data-lazy-style")
+        return style?.let {
+            Regex("""url\((.*?)\)""").find(it)?.groupValues?.get(1)
+                ?.trim('\'', '"', ' ')
+                ?.ifBlank { null }
+        }
+    }
+
+    private fun extractServerName(element: Element): String {
+        return (element.ownText().ifBlank { element.text() }).replace(Regex("\\s+"), " ").trim()
+    }
+
+    private fun String.encodeURL(): String {
+        return try {
+            URLEncoder.encode(this, "UTF-8")
+        } catch (e: Exception) { this }
+    }
+
+    private fun Element.toSearchResult(): SearchResponse? {
+        val linkElement = this.selectFirst("div.Thumb--GridItem a") ?: return null
+        val url = linkElement.attr("href")
+        if (url.isBlank()) return null
+
+        val posterUrl = getPosterFromStyle(linkElement.selectFirst("span.BG--GridItem"))
+        val titleTag = linkElement.selectFirst("strong") ?: return null
+        val title = titleTag.ownText().trim()
+        val year = titleTag.selectFirst("span.year")?.text()?.let { extractNumbers(it) }
+
+        val isMovie = this.selectFirst("div.Episode--number") == null && !url.contains("/series/")
+
+        return if (isMovie) {
+            newMovieSearchResponse(title, url, TvType.Movie) {
+                this.posterUrl = posterUrl
+                this.year = year
+            }
+        } else {
+            newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
+                this.posterUrl = posterUrl
+                this.year = year
+            }
+        }
+    }
+
+    // ================================
+    //     Main Page
+    // ================================
+
     override val mainPage = mainPageOf(
-        "$mainUrl/movies/page/" to "أفلام",
-        "$mainUrl/series/page/" to "مسلسلات",
-        "$mainUrl/category/%d8%a7%d9%81%d9%84%d8%a7%d9%85-%d8%a7%d9%86%d9%85%d9%8a/page/" to "أفلام أنمي",
-        "$mainUrl/category/%d9%85%d8%b3%d9%84%d8%b3%d9%84%d8%a7%d8%aa-%d8%a7%d9%86%d9%85%d9%8a/page/" to "مسلسلات أنمي",
-        "$mainUrl/last/page/" to "أضيف حديثاً"
+        "$mainUrl/" to "احدث الاضافات",
+        "$mainUrl/movies/" to "افلام جديدة",
+        "$mainUrl/series/" to "مسلسلات جديدة",
+        "$mainUrl/category/افلام-اجنبي/" to "افلام اجنبي",
+        "$mainUrl/category/مسلسلات-عربي/" to "مسلسلات عربي",
+        "$mainUrl/category/افلام-انمي/" to "أفلام أنمي",
+        "$mainUrl/category/مسلسلات-انمي/" to "مسلسلات أنمي",
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = request.data + page
-        val document = app.get(url, cookies = protectionCookies).document
-        val home = document.select("li.Small--Box").mapNotNull {
-            toSearchResult(it)
-        }
-        return newHomePageResponse(request.name, home)
-    }
+        return try {
+            val url = if (page > 1) {
+                "${request.data.removeSuffix("/")}/page/$page/"
+            } else {
+                request.data
+            }
 
-    private fun toSearchResult(element: Element): SearchResponse? {
-        val title = element.select("h3.title").text().trim()
-        val url = element.select("a").attr("href")
-        val posterUrl = element.select(".Poster img").let {
-            it.attr("data-src").ifEmpty { it.attr("src") }
-        }
-        val quality = element.select(".ribbon span").text().trim()
+            // استخدام httpGet بدلاً من app.get
+            val document = httpGet(url)
 
-        return newMovieSearchResponse(title, url, TvType.Movie) {
-            this.posterUrl = posterUrl
-            this.quality = getQualityFromString(quality)
+            val isBannerRequest = request.name == "احدث الاضافات" && page == 1
+            val selector = "div.Grid--WecimaPosts div.GridItem, div#MainFiltar div.GridItem, div.Slider--Grid div.GridItem"
+            val list = document.select(selector).mapNotNull { it.toSearchResult() }
+
+            val homePageList = HomePageList(
+                name = request.name,
+                list = list,
+                isHorizontalImages = isBannerRequest
+            )
+
+            HomePageResponse(listOf(homePageList))
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load page $page for ${request.name}", e)
+            val homePageList = HomePageList(
+                name = request.name,
+                list = emptyList(),
+                isHorizontalImages = false
+            )
+            HomePageResponse(listOf(homePageList))
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val url = "$mainUrl/?s=$query"
-        val document = app.get(url, cookies = protectionCookies).document
-        return document.select("li.Small--Box").mapNotNull {
-            toSearchResult(it)
-        }
+        val url = "$mainUrl/filtering/?keywords=${query.encodeURL()}"
+        val document = httpGet(url)
+        return document.select("div#MainFiltar div.GridItem").mapNotNull { it.toSearchResult() }
     }
 
-    override suspend fun load(url: String): LoadResponse {
-        val doc = app.get(url, cookies = protectionCookies).document
+    // ================================
+    //     Load
+    // ================================
 
-        val title = doc.select("h1.PostTitle").text().trim()
-        val poster = doc.select(".left .image img").let {
-            it.attr("data-src").ifEmpty { it.attr("src") }
+    override suspend fun load(url: String): LoadResponse? {
+        // الطلب الأول للصفحة سيقوم بفك حماية Cloudflare إن وجدت
+        val document = try {
+            httpGet(url)
+        } catch (e: Exception) {
+            return null
         }
-        val description = doc.select(".StoryArea p").text().trim()
-        val year = doc.select(".TaxContent a[href*='release-year']").text().trim().toIntOrNull()
-        val score = doc.select(".imdbR span").text()
-    .trim()
-    .toFloatOrNull()
-        val tags = doc.select(".TaxContent .genre a").map { it.text() }
 
-        // Check if it is a Series or Movie
-        val episodes = doc.select(".allepcont .row a")
+        val title = document.selectFirst("div.Title--Content--Single-begin > h1")?.ownText()?.trim() ?: return null
+        val poster = getPosterFromStyle(document.selectFirst("wecima.separated--top"))
+        val year = document.selectFirst("div.Title--Content--Single-begin h1 a")?.text()?.toIntOrNull()
+        val plot = document.selectFirst("div.StoryMovieContent")?.text()?.trim()
+        val tags = document.select("ul.Terms--Content--Single-begin li:has(span:contains(النوع)) p a").map { it.text() }
+        val recommendations = document.select("div.Grid--WecimaPosts div.GridItem").mapNotNull { it.toSearchResult() }
 
-        if (episodes.isNotEmpty()) {
-            val episodeList = episodes.map { ep ->
-                val epTitle = ep.select(".ep-info h2").text()
-                val epUrl = ep.attr("href")
-                val epThumb = ep.select("img").let { it.attr("data-src").ifEmpty { it.attr("src") } }
-                val epNum = ep.select(".epnum").text().replace(Regex("[^0-9]"), "").toIntOrNull()
+        val isSeriesPage = document.selectFirst("div.SeasonsList, .Seasons--Episodes") != null
+        val seriesUrlFromEpisode = document.selectFirst("ul.Terms--Content--Single-begin li:contains(المسلسل) a")?.attr("href")
 
-                newEpisode(epUrl) {
-                    this.name = epTitle
-                    this.posterUrl = epThumb
-                    this.episode = epNum
+        fun extractPostId(doc: org.jsoup.nodes.Document): String? {
+            doc.selectFirst("input[name=post_id]")?.attr("value")?.takeIf { it.isNotBlank() }?.let { return it }
+            doc.selectFirst("[data-post_id]")?.attr("data-post_id")?.takeIf { it.isNotBlank() }?.let { return it }
+            doc.selectFirst("[data-postid]")?.attr("data-postid")?.takeIf { it.isNotBlank() }?.let { return it }
+            doc.selectFirst("meta[name=post_id]")?.attr("content")?.takeIf { it.isNotBlank() }?.let { return it }
+            val scriptsText = doc.select("script").joinToString(" ") { it.data() ?: "" }
+            Regex("""post_id['"]?\s*[:=]\s*['"]?(\d{3,})['"]?""").find(scriptsText)?.groups?.get(1)?.value?.let { return it }
+            Regex("""postid['"]?\s*[:=]\s*['"]?(\d{3,})['"]?""").find(scriptsText)?.groups?.get(1)?.value?.let { return it }
+            return null
+        }
+
+        fun extractEpisodeNumberFromText(text: String?): String? {
+            if (text.isNullOrBlank()) return null
+            Regex("""الحلقة\s*(\d+)""").find(text)?.groups?.get(1)?.value?.let { return it }
+            Regex("""\b(\d{1,3})\b""").find(text)?.groups?.get(1)?.value?.let { return it }
+            return null
+        }
+
+        fun resolveUrl(base: String, relative: String): String {
+            return try {
+                val u = java.net.URL(java.net.URL(base), relative)
+                u.toString()
+            } catch (e: Exception) {
+                if (relative.startsWith("http")) relative else mainUrl.trimEnd('/') + "/" + relative.trimStart('/')
+            }
+        }
+
+        if (isSeriesPage) {
+            val episodes = mutableListOf<Episode>()
+            val postId = extractPostId(document)
+            val ajaxUrl = "$mainUrl/wp-content/themes/mycima/Ajaxt/Single/Episodes.php"
+            val headers = mapOf("Referer" to url)
+
+            var seasonAnchors = document.select("div.SeasonsList ul li a")
+            if (seasonAnchors.isEmpty()) {
+                seasonAnchors = document.select(".Seasons--Episodes ul li a")
+            }
+
+            if (seasonAnchors.isEmpty()) {
+                val globalAnchors = document.select("div.EpisodesList a[href], a.episode[href]")
+                for (a in globalAnchors) {
+                    val epTitleRaw = a.selectFirst(".episodetitle")?.text() ?: a.attr("title").ifBlank { a.text() }
+                    val epNumText = extractEpisodeNumberFromText(epTitleRaw)
+                    val epNum = epNumText?.toIntOrNull()
+                    val newTitle = if (epNum != null) "الحلقة $epNum" else (epTitleRaw ?: "حلقة")
+                    var epHref = a.attr("href").ifBlank { a.attr("data-href") }
+                    if (epHref.isNullOrBlank()) continue
+                    epHref = resolveUrl(url, epHref)
+                    episodes.add(newEpisode(epHref) {
+                        this.name = newTitle
+                        this.season = null
+                        this.episode = epNum
+                        this.posterUrl = poster
+                    })
+                }
+
+                val distinctEpisodes = episodes.distinctBy { it.data }
+                return newTvSeriesLoadResponse(title, url, TvType.TvSeries, distinctEpisodes) {
+                    this.posterUrl = poster
+                    this.year = year
+                    this.plot = plot
+                    this.tags = tags
+                    this.recommendations = recommendations
                 }
             }
-            return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodeList) {
+
+            for ((seasonIndex, seasonEl) in seasonAnchors.withIndex()) {
+                val rawSeasonText = seasonEl.text().trim()
+                val seasonIdRaw = seasonEl.attr("data-season").ifBlank { seasonEl.attr("data-season-id") }
+                val seasonHrefRaw = seasonEl.attr("href").ifBlank { seasonEl.attr("data-href") }
+
+                val seasonNumFromText = extractNumbers(rawSeasonText)
+                val seasonNumFromId = extractNumbers(seasonIdRaw)?.takeIf { seasonIdRaw.length <= 3 }
+                val seasonNumber = seasonNumFromText ?: seasonNumFromId ?: (seasonIndex + 1)
+
+                val seasonLabel = when {
+                    rawSeasonText.isNotBlank() && !rawSeasonText.matches(Regex("^\\d{3,}\$")) -> {
+                        if (rawSeasonText.matches(Regex("^\\d{1,3}\$"))) "الموسم $rawSeasonText" else rawSeasonText
+                    }
+                    else -> "الموسم $seasonNumber"
+                }
+
+                var gotEpisodesForThisSeason = false
+                var localEpisodeCounter = 0
+
+                // 1) AJAX (محمي الآن بفضل دالة httpPost)
+                if (seasonIdRaw.isNotBlank() && !postId.isNullOrBlank()) {
+                    try {
+                        val postData = mapOf("season" to seasonIdRaw, "post_id" to postId)
+                        val resp = try {
+                            httpPost(ajaxUrl, data = postData, customHeaders = headers, timeout = 10_000L)
+                        } catch (e: Exception) {
+                            try { httpPost(ajaxUrl, data = postData) } catch (ex: Exception) { null }
+                        }
+                        
+                        resp?.let {
+                            val episodesHtml = it.document.body().html().ifBlank { it.document.html() }
+                            val epDoc = org.jsoup.Jsoup.parse(episodesHtml)
+                            val anchors = epDoc.select("a[href]").ifEmpty { epDoc.select("div.EpisodesList a[href]") }
+                            if (anchors.isNotEmpty()) {
+                                for (a in anchors) {
+                                    val epTitleRaw = a.selectFirst(".episodetitle")?.text() ?: a.attr("title").ifBlank { a.text() }
+                                    val epNumText = extractEpisodeNumberFromText(epTitleRaw)
+                                    val epNum = epNumText?.toIntOrNull() ?: run {
+                                        localEpisodeCounter += 1
+                                        localEpisodeCounter
+                                    }
+                                    var epHref = a.attr("href").ifBlank { a.attr("data-href") }
+                                    if (epHref.isNullOrBlank()) continue
+                                    epHref = resolveUrl(url, epHref)
+                                    episodes.add(newEpisode(epHref) {
+                                        this.name = "$seasonLabel الحلقة $epNum"
+                                        this.season = seasonNumber
+                                        this.episode = epNum
+                                        this.posterUrl = poster
+                                    })
+                                }
+                                gotEpisodesForThisSeason = true
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                if (gotEpisodesForThisSeason) continue
+
+                // 2) صفحة الموسم href
+                if (!seasonHrefRaw.isNullOrBlank()) {
+                    try {
+                        val resolvedSeasonHref = resolveUrl(url, seasonHrefRaw)
+                        val seasonResp = try { httpGet(resolvedSeasonHref, customHeaders = headers, timeout = 10_000L) } catch (_: Exception) { null }
+                        seasonResp?.let { seasonDoc ->
+                            val anchors = seasonDoc.select("div.EpisodesList a[href], a[href]").filter {
+                                it.closest(".SeasonsList") == null
+                            }
+                            if (anchors.isNotEmpty()) {
+                                for (a in anchors) {
+                                    val epTitleRaw = a.selectFirst(".episodetitle")?.text() ?: a.attr("title").ifBlank { a.text() }
+                                    val epNumText = extractEpisodeNumberFromText(epTitleRaw)
+                                    val epNum = epNumText?.toIntOrNull() ?: run {
+                                        localEpisodeCounter += 1
+                                        localEpisodeCounter
+                                    }
+                                    var epHref = a.attr("href").ifBlank { a.attr("data-href") }
+                                    if (epHref.isNullOrBlank()) continue
+                                    epHref = resolveUrl(url, epHref)
+                                    episodes.add(newEpisode(epHref) {
+                                        this.name = "$seasonLabel الحلقة $epNum"
+                                        this.season = seasonNumber
+                                        this.episode = epNum
+                                        this.posterUrl = poster
+                                    })
+                                }
+                                gotEpisodesForThisSeason = true
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                if (gotEpisodesForThisSeason) continue
+
+                // 3) fallback block في نفس الصفحة
+                val fallbackBlocks = document.select("div.SeasonsList, .Seasons--Episodes")
+                if (fallbackBlocks.isNotEmpty()) {
+                    val matchingBlock = fallbackBlocks.getOrNull(seasonIndex) ?: fallbackBlocks.firstOrNull()
+                    matchingBlock?.select("div.EpisodesList a[href], a[href]")?.let { anchors ->
+                        if (anchors.isNotEmpty()) {
+                            for (a in anchors) {
+                                val epTitleRaw = a.selectFirst(".episodetitle")?.text() ?: a.attr("title").ifBlank { a.text() }
+                                val epNumText = extractEpisodeNumberFromText(epTitleRaw)
+                                val epNum = epNumText?.toIntOrNull() ?: run {
+                                    localEpisodeCounter += 1
+                                    localEpisodeCounter
+                                }
+                                var epHref = a.attr("href").ifBlank { a.attr("data-href") }
+                                if (epHref.isNullOrBlank()) continue
+                                epHref = resolveUrl(url, epHref)
+                                episodes.add(newEpisode(epHref) {
+                                    this.name = "$seasonLabel الحلقة $epNum"
+                                    this.season = seasonNumber
+                                    this.episode = epNum
+                                    this.posterUrl = poster
+                                })
+                            }
+                            gotEpisodesForThisSeason = true
+                        }
+                    }
+                }
+            }
+
+            val distinctEpisodes = episodes.distinctBy { it.data }
+
+            return newTvSeriesLoadResponse(title, url, TvType.TvSeries, distinctEpisodes) {
                 this.posterUrl = poster
                 this.year = year
-                this.plot = description
+                this.plot = plot
                 this.tags = tags
+                this.recommendations = recommendations
             }
+        } else if (seriesUrlFromEpisode != null) {
+            return load(seriesUrlFromEpisode)
         } else {
             return newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = poster
                 this.year = year
-                this.plot = description
+                this.plot = plot
                 this.tags = tags
-                
+                this.recommendations = recommendations
             }
         }
     }
 
-    // --- التعديل هنا ---
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // 1. جلب الصفحة التي تم تمريرها (صفحة الفيلم الرئيسية)
-        val doc = app.get(data, cookies = protectionCookies).document
-
-        // 2. البحث عن رابط زر "مشاهدة الآن" (الذي يحمل كلاس watch)
-        // هذا الزر ينقلنا من صفحة المعلومات إلى صفحة السيرفرات
-        val watchButtonUrl = doc.select("a.watch").attr("href")
-
-
-        val targetDoc = if (watchButtonUrl.isNotBlank()) {
-            app.get(watchButtonUrl, cookies = protectionCookies).document
-        } else {
-            doc
+        // الطلب الأساسي للصفحة (الآن محمي بـ httpGet)
+        val document = try {
+            httpGet(data)
+        } catch (e: Exception) {
+            return false
         }
 
-        // 4. استخراج السيرفرات من القائمة ul id="watch" والخاصية data-watch
-        targetDoc.select("ul#watch li").forEach { server ->
-            val embedUrl = server.attr("data-watch")
-            if (embedUrl.isNotBlank()) {
-                // إرسال الرابط لـ loadExtractor لاستخراج الفيديو الحقيقي
-                loadExtractor(embedUrl, subtitleCallback, callback)
-            }
+        val linksToProcess = mutableListOf<Pair<String, String>>() 
+
+        // إضافة روابط المشاهدة
+        document.select("ul#watch li[data-watch]").forEach {
+            val url = it.attr("data-watch")
+            val name = extractServerName(it)
+            if (url.isNotBlank()) linksToProcess.add(url to name)
+        }
+
+        // إضافة روابط التحميل
+        document.select("ul.List--Download--Wecima--Single li a[href]").forEach {
+            val url = it.attr("href")
+            val name = it.selectFirst("quality")?.text()?.trim() ?: "تحميل"
+            if (url.isNotBlank()) linksToProcess.add(url to name)
+        }
+
+        coroutineScope {
+            linksToProcess.distinctBy { it.first }.map { (link, serverName) ->
+                async {
+                    val finalUrl = if (link.contains("govid.site")) {
+                        try {
+                            // محمية بـ httpGet
+                            val govidDoc = httpGet(link)
+                            govidDoc.selectFirst("iframe")?.attr("src")
+                        } catch (e: Exception) {
+                            null
+                        }
+                    } else if (link.contains("mycima.page/go/")) {
+                        try {
+                            val base64Part = link.substringAfterLast('/')
+                            base64Part.safeBase64Decode()
+                        } catch (e: Exception) {
+                            null
+                        }
+                    } else {
+                        link
+                    }
+
+                    if (!finalUrl.isNullOrBlank()) {
+                        loadExtractor(finalUrl, data, subtitleCallback, callback)
+
+                        if (serverName.equals("EarnVids", true) || serverName.equals("StreamHG", true)) {
+                            try {
+                                ExternalEarnVidsExtractor.extract(finalUrl, mainUrl)?.let { customLink ->
+                                    callback.invoke(
+                                        newExtractorLink(
+                                            this@MyCimaProvider.name,
+                                            "$serverName (مخصص)",
+                                            customLink,
+                                        ) {
+                                            this.quality = Qualities.Unknown.value
+                                        }
+                                    )
+                                }
+                            } catch (e: Exception) {
+                            }
+                        }
+                    }
+                }
+            }.awaitAll()
         }
 
         return true
