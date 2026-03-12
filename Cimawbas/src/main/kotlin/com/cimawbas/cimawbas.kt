@@ -113,20 +113,30 @@ class CimaWbas(private val context: Context) : MainAPI() {
 
             // تعيين الحجم إلى 1x1 بكسل ووضعه في الزاوية (خارج الرؤية عملياً)
             val params = WindowManager.LayoutParams()
-            params.copyFrom(dialog.window?.attributes)
-            params.width = 1
-            params.height = 1
-            params.gravity = Gravity.TOP or Gravity.START
-            params.x = -100 // خارج الشاشة
-            params.y = -100 // خارج الشاشة
-            dialog.window?.attributes = params
+params.copyFrom(dialog.window?.attributes)
 
-            // WebView صغير جداً
-            val webView = WebView(activity)
-            dialog.setContentView(
-                webView,
-                ViewGroup.LayoutParams(1, 1)
-            )
+// حجم طبيعي
+params.width = WindowManager.LayoutParams.MATCH_PARENT
+params.height = WindowManager.LayoutParams.MATCH_PARENT
+
+// في منتصف الشاشة
+params.gravity = Gravity.CENTER
+
+// بدون إزاحة
+params.x = 0
+params.y = 0
+
+dialog.window?.attributes = params
+
+// WebView بالحجم الكامل
+val webView = WebView(activity)
+dialog.setContentView(
+    webView,
+    ViewGroup.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.MATCH_PARENT
+    )
+)
 
             try {
                 webView.settings.apply {
