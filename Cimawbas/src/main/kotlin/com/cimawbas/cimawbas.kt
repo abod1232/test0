@@ -4,19 +4,15 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.Dialog
 import android.content.Context
-import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
-import android.util.Base64
 import android.util.Log
+import android.util.TypedValue
 import android.view.Gravity
-import android.view.View
 import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
 import android.webkit.CookieManager
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -26,7 +22,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import okhttp3.CookieJar
 import okhttp3.FormBody
@@ -37,28 +35,56 @@ import org.jsoup.nodes.Element
 import java.net.URLEncoder
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
-
+import android.widget.FrameLayout
+import android.widget.TextView
+import android.graphics.Color
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.net.Uri
+import android.widget.LinearLayout
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import java.net.HttpURLConnection
+import java.net.URL
+import android.webkit.JavascriptInterface
+import android.widget.ScrollView
+import android.webkit.WebChromeClient
+import android.view.View
+import android.webkit.ConsoleMessage
+import android.graphics.Bitmap
+import java.io.InputStream
 class CimaWbas(private val context: Context) : MainAPI() {
+    override var name = "FASELHD"
+    override var mainUrl = "https://www.faselhds.biz"
     override var lang = "ar"
-    override var mainUrl = "https://mycima.page"
-    override var name = "MyCima"
-    override val usesWebView = false
     override val hasMainPage = true
-    override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie, TvType.Anime, TvType.AsianDrama)
+    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
 
-    companion object {
-        const val TAG = "MyCima"
-    }
-
-    // ================================
-    //     Smart Cloudflare Bypass
-    // ================================
+    override val mainPage = mainPageOf(
+        mainUrl to "الرئيسية",
+        "$mainUrl/movies" to "أفلام أجنبية",
+        "$mainUrl/series" to "مسلسلات أجنبية",
+        "$mainUrl/hindi" to "أفلام هندي",
+        "$mainUrl/asian-movies" to "أفلام آسيوية",
+        "$mainUrl/anime" to "أنمي",
+        "$mainUrl/anime-movies" to "أفلام أنمي"
+    )
 
     private val cfLock = Mutex()
     private var lastValidUserAgent =
         "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
 
-    @SuppressLint("SetTextI18n", "SetJavaScriptEnabled")
+    private fun getProtectedHeaders(): Map<String, String> {
+        val cm = CookieManager.getInstance()
+        val cookies = cm.getCookie(mainUrl) ?: ""
+        return mapOf(
+            "Cookie" to cookies,
+            "User-Agent" to lastValidUserAgent,
+            "Referer" to mainUrl
+        )
+    }
+
+    @SuppressLint("SetTextI18n")
     private suspend fun fetchCookiesWithTrustedWebView(
         url: String,
         timeoutMs: Long = 60000L
@@ -74,24 +100,33 @@ class CimaWbas(private val context: Context) : MainAPI() {
             val dialog = Dialog(activity)
             dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
             dialog.setCancelable(false)
-            dialog.window?.apply {
-                addFlags(
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                )
-                setBackgroundDrawableResource(android.R.color.transparent)
-                setDimAmount(0f)
-                val params = attributes
-                params.width = 1
-                params.height = 1
-                params.gravity = Gravity.TOP or Gravity.START
-                params.x = -100 // خارج الشاشة
-                params.y = -100 // خارج الشاشة
-                attributes = params
-            }
 
+            dialog.window?.addFlags(
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            )
+
+
+            // جعل الخلفية شفافة وإزالة التعتيم
+            dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+            dialog.window?.setDimAmount(0f)
+
+            // تعيين الحجم إلى 1x1 بكسل ووضعه في الزاوية (خارج الرؤية عملياً)
+            val params = WindowManager.LayoutParams()
+            params.copyFrom(dialog.window?.attributes)
+            params.width = 1
+            params.height = 1
+            params.gravity = Gravity.TOP or Gravity.START
+            params.x = -100 // خارج الشاشة
+            params.y = -100 // خارج الشاشة
+            dialog.window?.attributes = params
+
+            // WebView صغير جداً
             val webView = WebView(activity)
-            dialog.setContentView(webView, ViewGroup.LayoutParams(1, 1))
+            dialog.setContentView(
+                webView,
+                ViewGroup.LayoutParams(1, 1)
+            )
 
             try {
                 webView.settings.apply {
@@ -101,31 +136,51 @@ class CimaWbas(private val context: Context) : MainAPI() {
                     userAgentString = lastValidUserAgent
                     useWideViewPort = true
                     loadWithOverviewMode = true
-                    blockNetworkImage = false
+                    blockNetworkImage = false // الصور مهمة أحياناً للتحقق
                     loadsImagesAutomatically = true
                     javaScriptCanOpenWindowsAutomatically = true
                     cacheMode = WebSettings.LOAD_DEFAULT
                 }
                 lastValidUserAgent = webView.settings.userAgentString
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
 
             val cookieManager = CookieManager.getInstance()
             try {
                 cookieManager.setAcceptCookie(true)
                 cookieManager.setAcceptThirdPartyCookies(webView, true)
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
 
             var finished = false
 
             fun finish(result: String?) {
                 if (finished) return
                 finished = true
-                try { cookieManager.flush() } catch (_: Exception) {}
-                try { if (dialog.isShowing) dialog.dismiss() } catch (_: Exception) {}
-                try { webView.stopLoading() } catch (_: Exception) {}
-                try { webView.destroy() } catch (_: Exception) {}
-                try { cont.resume(result) } catch (_: Exception) {}
+                try {
+                    cookieManager.flush()
+                } catch (_: Exception) {
+                }
+                try {
+                    if (dialog.isShowing) dialog.dismiss()
+                } catch (_: Exception) {
+                }
+                try {
+                    webView.stopLoading()
+                } catch (_: Exception) {
+                }
+                try {
+                    webView.destroy()
+                } catch (_: Exception) {
+                }
+                try {
+                    cont.resume(result)
+                } catch (_: Exception) {
+                }
             }
+
+            // لا يوجد زر إغلاق لأن النافذة مخفية، نعتمد على التايمر والتحقق
+            // dialog.setOnDismissListener { if (!finished) finish(cookieManager.getCookie(url)) }
 
             val startTime = System.currentTimeMillis()
             val handler = Handler(Looper.getMainLooper())
@@ -135,10 +190,12 @@ class CimaWbas(private val context: Context) : MainAPI() {
                     if (finished) return
                     val currentCookies = try {
                         cookieManager.getCookie(url)
-                    } catch (e: Exception) { "" } ?: ""
+                    } catch (e: Exception) {
+                        ""
+                    } ?: ""
 
                     if (currentCookies.contains("cf_clearance")) {
-                        Log.d(TAG, "Silent Cloudflare Bypass Successful!")
+                        Log.d("FASELHD", "Silent Cloudflare Bypass Successful!")
                         handler.postDelayed({ finish(currentCookies) }, 2500)
                         return
                     }
@@ -159,13 +216,22 @@ class CimaWbas(private val context: Context) : MainAPI() {
                 webView.loadUrl(url)
             } catch (e: Exception) {
                 finish(null)
+                return@post
             }
         }
     }
 
-    private suspend fun smartGet(url: String, referer: String? = null, timeoutSeconds: Long = 15000L): Document {
+    private suspend fun smartGet(
+        url: String,
+        referer: String? = null,
+        timeoutSeconds: Long? = null
+    ): Document {
         try {
-            val normalDoc = app.get(url, referer = referer, timeout = timeoutSeconds, cacheTime = 0).document
+            val normalDoc = if (referer != null) {
+                app.get(url, referer = referer, timeout = timeoutSeconds ?: 0L).document
+            } else {
+                app.get(url, timeout = timeoutSeconds ?: 0L).document
+            }
             val title = normalDoc.select("title").text()
             val bodyText = normalDoc.body()?.text() ?: ""
             val html = normalDoc.html() ?: ""
@@ -175,7 +241,66 @@ class CimaWbas(private val context: Context) : MainAPI() {
                     html.contains("cf-turnstile") ||
                     html.contains("challenge-platform")
             if (!looksLikeCF) return normalDoc
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+        }
+
+        val cookies = cfLock.withLock {
+            val cm = CookieManager.getInstance()
+            val existingCookies = cm.getCookie(mainUrl) ?: ""
+            if (existingCookies.contains("cf_clearance")) {
+                existingCookies
+            } else {
+                fetchCookiesWithTrustedWebView(url, timeoutMs = 60_000L)
+            }
+        }
+
+        if (!cookies.isNullOrBlank()) {
+            val headers = mutableMapOf(
+                "Cookie" to cookies,
+                "User-Agent" to lastValidUserAgent,
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Accept-Language" to "en-US,en;q=0.9,ar;q=0.8",
+                "Upgrade-Insecure-Requests" to "1",
+                "Sec-Fetch-Dest" to "document",
+                "Sec-Fetch-Mode" to "navigate",
+                "Sec-Fetch-Site" to "none",
+                "Sec-Fetch-User" to "?1"
+            )
+            if (!referer.isNullOrBlank()) headers["Referer"] = referer
+
+            return try {
+                val reqBuilder = OkRequest.Builder().url(url)
+                headers.forEach { (k, v) -> reqBuilder.addHeader(k, v) }
+
+                val client = app.baseClient.newBuilder()
+                    .cookieJar(CookieJar.NO_COOKIES)
+                    .build()
+
+                val okResp = client.newCall(reqBuilder.build()).execute()
+
+                val bodyStr = okResp.body?.string() ?: ""
+                Jsoup.parse(bodyStr, url)
+            } catch (ee: Exception) {
+                Jsoup.parse("", url)
+            }
+        }
+        return Jsoup.parse("", url)
+    }
+
+    private suspend fun smartPost(
+        url: String,
+        referer: String? = null,
+        timeoutSeconds: Long? = null
+    ): Document {
+        try {
+            val normalDoc = if (referer != null) {
+                app.post(url, referer = referer, timeout = timeoutSeconds ?: 0L).document
+            } else {
+                app.post(url, timeout = timeoutSeconds ?: 0L).document
+            }
+            if (!normalDoc.text().contains("Just a moment", ignoreCase = true)) return normalDoc
+        } catch (_: Exception) {
+        }
 
         val cookies = cfLock.withLock {
             val cm = CookieManager.getInstance()
@@ -192,67 +317,15 @@ class CimaWbas(private val context: Context) : MainAPI() {
                 "Cookie" to cookies,
                 "User-Agent" to lastValidUserAgent,
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language" to "ar,en-US;q=0.9,en;q=0.8",
-                "Upgrade-Insecure-Requests" to "1",
-                "Cache-Control" to "no-cache",
-                "Pragma" to "no-cache"
+                "Accept-Language" to "en-US,en;q=0.9,ar;q=0.8",
+                "Upgrade-Insecure-Requests" to "1"
             )
             if (!referer.isNullOrBlank()) headers["Referer"] = referer
 
             return try {
-                val reqBuilder = OkRequest.Builder().url(url)
-                headers.forEach { (k, v) -> reqBuilder.addHeader(k, v) }
-
-                val client = app.baseClient.newBuilder()
-                    .cookieJar(CookieJar.NO_COOKIES)
-                    .build()
-
-                val okResp = client.newCall(reqBuilder.build()).execute()
-                val bodyStr = okResp.body?.string() ?: ""
-                Jsoup.parse(bodyStr, url)
-            } catch (e: Exception) {
-                Jsoup.parse("", url)
-            }
-        }
-        return Jsoup.parse("", url)
-    }
-
-    private suspend fun smartPost(url: String, data: Map<String, String>, referer: String? = null, timeoutSeconds: Long = 15000L): Document {
-        try {
-            val normalDoc = app.post(url, data = data, referer = referer, timeout = timeoutSeconds, cacheTime = 0).document
-            if (!normalDoc.text().contains("Just a moment", ignoreCase = true)) return normalDoc
-        } catch (_: Exception) {}
-
-        val cookies = cfLock.withLock {
-            val cm = CookieManager.getInstance()
-            val existingCookies = cm.getCookie(mainUrl) ?: ""
-            if (existingCookies.contains("cf_clearance")) {
-                existingCookies
-            } else {
-                fetchCookiesWithTrustedWebView(url, timeoutMs = 60_000L)
-            }
-        }
-
-        if (!cookies.isNullOrBlank()) {
-            val headers = mutableMapOf(
-                "Cookie" to cookies,
-                "User-Agent" to lastValidUserAgent,
-                "Accept" to "*/*",
-                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-                "X-Requested-With" to "XMLHttpRequest",
-                "Cache-Control" to "no-cache",
-                "Pragma" to "no-cache"
-            )
-            if (!referer.isNullOrBlank()) headers["Referer"] = referer
-
-            return try {
-                val formBody = FormBody.Builder().apply {
-                    data.forEach { (k, v) -> add(k, v) }
-                }.build()
-                
                 val reqBuilder = OkRequest.Builder()
                     .url(url)
-                    .post(formBody)
+                    .post(FormBody.Builder().build())
 
                 headers.forEach { (k, v) -> reqBuilder.addHeader(k, v) }
 
@@ -268,339 +341,799 @@ class CimaWbas(private val context: Context) : MainAPI() {
             }
         }
         return Jsoup.parse("", url)
-    }
-
-    // ================================
-    //     Helper Functions
-    // ================================
-
-    private fun extractNumbers(text: String?): Int? {
-        if (text.isNullOrBlank()) return null
-        return Regex("""\d+""").find(text)?.value?.toIntOrNull()
-    }
-
-    private fun String.safeBase64Decode(): String {
-        return try {
-            String(Base64.decode(this, Base64.DEFAULT), Charsets.UTF_8)
-        } catch (e: Exception) { "" }
-    }
-
-    private fun getPosterFromStyle(element: Element?): String? {
-        val style = element?.attr("style")?.ifBlank { null } ?: element?.attr("data-lazy-style")
-        return style?.let {
-            Regex("""url\((.*?)\)""").find(it)?.groupValues?.get(1)
-                ?.trim('\'', '"', ' ')
-                ?.ifBlank { null }
-        }
-    }
-
-    private fun extractServerName(element: Element): String {
-        return (element.ownText().ifBlank { element.text() }).replace(Regex("\\s+"), " ").trim()
-    }
-
-    private fun String.encodeURL(): String {
-        return try {
-            URLEncoder.encode(this, "UTF-8")
-        } catch (e: Exception) { this }
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val linkElement = this.selectFirst("div.Thumb--GridItem a") ?: return null
-        val url = linkElement.attr("href")
-        if (url.isBlank()) return null
+        val href = this.selectFirst("a")?.attr("href")?.trim() ?: return null
+        val title = this.selectFirst(".h1, .h4, .h5")?.text()?.trim() ?: return null
+        val posterUrl = this.selectFirst("img")
+            ?.let { it.attr("data-src").ifBlank { it.attr("src") } }
+            ?.trim()
+        if (href.isBlank() || title.isBlank()) return null
 
-        val posterUrl = getPosterFromStyle(linkElement.selectFirst("span.BG--GridItem"))
-        val titleTag = linkElement.selectFirst("strong") ?: return null
-        val title = titleTag.ownText().trim()
-        val year = titleTag.selectFirst("span.year")?.text()?.let { extractNumbers(it) }
+        val headers = getProtectedHeaders()
 
-        val isMovie = this.selectFirst("div.Episode--number") == null && !url.contains("/series/")
-
-        return if (isMovie) {
-            newMovieSearchResponse(title, url, TvType.Movie) {
-                this.posterUrl = posterUrl
-                this.year = year
-            }
-        } else {
-            newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
-                this.posterUrl = posterUrl
-                this.year = year
-            }
+        return newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+            this.posterUrl = posterUrl
+            this.posterHeaders = headers
         }
     }
 
-    // ================================
-    //     Main Page
-    // ================================
-
-    override val mainPage = mainPageOf(
-        "$mainUrl/" to "احدث الاضافات",
-        "$mainUrl/movies/" to "افلام جديدة",
-        "$mainUrl/series/" to "مسلسلات جديدة",
-        "$mainUrl/category/افلام-اجنبي/" to "افلام اجنبي",
-        "$mainUrl/category/مسلسلات-عربي/" to "مسلسلات عربي",
-        "$mainUrl/category/افلام-انمي/" to "أفلام أنمي",
-        "$mainUrl/category/مسلسلات-انمي/" to "مسلسلات أنمي",
-    )
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        return try {
-            val url = if (page > 1) {
-                "${request.data.removeSuffix("/")}/page/$page/"
-            } else {
-                request.data
+        val url = if (page > 1 && request.data != mainUrl) {
+            if (request.data.contains("all_movies"))
+                "${request.data.removeSuffix("/")}/page/$page"
+            else
+                "${request.data}/page/$page"
+        } else {
+            request.data
+        }
+
+        val document = smartGet(url)
+        val headers = getProtectedHeaders()
+
+        if (request.data == mainUrl) {
+            val lists = mutableListOf<HomePageList>()
+            val sliderItems = document.select("#homeSlide .swiper-slide").mapNotNull {
+                val slideHref = it.selectFirst("a")?.attr("href") ?: return@mapNotNull null
+                val slideTitle = it.selectFirst(".h1 a")?.text()?.trim() ?: return@mapNotNull null
+                val slidePoster = it.selectFirst(".poster img")?.attr("src")
+                newMovieSearchResponse(slideTitle, slideHref, TvType.Movie) {
+                    this.posterUrl = slidePoster
+                    this.posterHeaders = headers
+                }
+            }
+            if (sliderItems.isNotEmpty()) {
+                lists.add(HomePageList("أحدث الإضافات", sliderItems, isHorizontalImages = true))
             }
 
-            val document = smartGet(url)
+            document.select("div.slider")
+                .firstOrNull { it.selectFirst(".h4")?.text()?.contains("مشاهدة") == true }
+                ?.let { mostWatchedBlock ->
+                    val title =
+                        mostWatchedBlock.selectFirst(".h4")?.text() ?: "الأفلام الأكثر مشاهدة"
+                    val items = mostWatchedBlock.select(".itemviews .postDiv")
+                        .mapNotNull { it.toSearchResult() }
+                    if (items.isNotEmpty()) {
+                        lists.add(HomePageList(title, items, isHorizontalImages = true))
+                    }
+                }
 
-            val isBannerRequest = request.name == "احدث الاضافات" && page == 1
-            val selector = "div.Grid--WecimaPosts div.GridItem, div#MainFiltar div.GridItem, div.Slider--Grid div.GridItem"
-            val list = document.select(selector).mapNotNull { it.toSearchResult() }
-
-            val homePageList = HomePageList(
-                name = request.name,
-                list = list,
-                isHorizontalImages = isBannerRequest
-            )
-
-            newHomePageResponse(homePageList)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to load page $page for ${request.name}", e)
-            val homePageList = HomePageList(
-                name = request.name,
-                list = emptyList(),
-                isHorizontalImages = false
-            )
-            newHomePageResponse(homePageList)
+            document.select("section#blockList").forEach { block ->
+                val title = block.selectFirst(".blockHead .h3")?.text() ?: return@forEach
+                if (!title.contains("آخر الأفلام المضافة")) {
+                    val items = block.select(".blockMovie, .postDiv, .epDivHome")
+                        .mapNotNull { it.toSearchResult() }
+                    if (items.isNotEmpty()) {
+                        lists.add(HomePageList(title, items))
+                    }
+                }
+            }
+            return HomePageResponse(lists.filter { it.list.isNotEmpty() }, hasNext = false)
+        } else {
+            val items = document.select(".postDiv, .blockMovie").mapNotNull { it.toSearchResult() }
+            val hasNext = document.select("ul.pagination a[href*='/page/${page + 1}']").isNotEmpty()
+            return newHomePageResponse(request.name, items, hasNext)
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val url = "$mainUrl/filtering/?keywords=${query.encodeURL()}"
-        val document = smartGet(url)
-        return document.select("div#MainFiltar div.GridItem").mapNotNull { it.toSearchResult() }
+        return search(query, 1)?.items ?: emptyList()
     }
 
-    // ================================
-    //     Load
-    // ================================
+    override suspend fun search(query: String, page: Int): SearchResponseList {
+        val encoded = URLEncoder.encode(query, "UTF-8")
+        val searchUrl = if (page == 1) {
+            "$mainUrl/?s=$encoded"
+        } else {
+            "$mainUrl/page/$page/?s=$encoded"
+        }
+        val document = smartGet(searchUrl)
+        val items = document.select("div#postList div.postDiv").mapNotNull { it.toSearchResult() }
+        val hasNext = document.select("ul.pagination a[href*='/page/${page + 1}']").isNotEmpty()
+        return newSearchResponseList(items, hasNext)
+    }
 
     override suspend fun load(url: String): LoadResponse? {
-        val document = try {
-            smartGet(url)
-        } catch (e: Exception) {
-            return null
+        val doc = smartGet(url)
+        val title = doc.selectFirst(".singleInfo .title.h1")?.ownText()?.trim() ?: return null
+        val poster = fixUrlNull(
+            doc.selectFirst("meta[itemprop=image]")?.attr("content")
+                ?: doc.selectFirst(".posterImg img.poster")?.attr("src")
+        )
+        val plot = doc.selectFirst(".singleDesc p, .story p")?.text()?.trim()
+        val backgroundPoster = doc.selectFirst("div.singlePage")?.attr("style")
+            ?.let { Regex("""url\(['"]?(.*?)['"]?\)""").find(it)?.groupValues?.get(1) }
+            ?.let { fixUrlNull(it) }
+
+        var year: Int? = null
+        val tagsList = mutableListOf<String>()
+        doc.select("#singleList > div").forEach {
+            val text = it.text()
+            when {
+                text.contains("سنة الإنتاج") -> year = it.selectFirst("a")?.text()?.toIntOrNull()
+                text.contains("تصنيف") -> tagsList.addAll(
+                    it.select("a").map { tagEl -> tagEl.text() })
+            }
         }
 
-        val title = document.selectFirst("div.Title--Content--Single-begin > h1")?.ownText()?.trim() ?: return null
-        val poster = getPosterFromStyle(document.selectFirst("wecima.separated--top"))
-        val year = document.selectFirst("div.Title--Content--Single-begin h1 a")?.text()?.toIntOrNull()
-        val plot = document.selectFirst("div.StoryMovieContent")?.text()?.trim()
-        val tags = document.select("ul.Terms--Content--Single-begin li:has(span:contains(النوع)) p a").map { it.text() }
-        val recommendations = document.select("div.Grid--WecimaPosts div.GridItem").mapNotNull { it.toSearchResult() }
+        val headers = getProtectedHeaders()
 
-        val isSeriesPage = document.selectFirst("div.SeasonsList, .Seasons--Episodes") != null
-        val seriesUrlFromEpisode = document.selectFirst("ul.Terms--Content--Single-begin li:contains(المسلسل) a")?.attr("href")
-
-        fun extractPostId(doc: org.jsoup.nodes.Document): String? {
-            doc.selectFirst("input[name=post_id]")?.attr("value")?.takeIf { it.isNotBlank() }?.let { return it }
-            doc.selectFirst("[data-post_id]")?.attr("data-post_id")?.takeIf { it.isNotBlank() }?.let { return it }
-            doc.selectFirst("[data-postid]")?.attr("data-postid")?.takeIf { it.isNotBlank() }?.let { return it }
-            doc.selectFirst("meta[name=post_id]")?.attr("content")?.takeIf { it.isNotBlank() }?.let { return it }
-            val scriptsText = doc.select("script").joinToString(" ") { it.data() ?: "" }
-            Regex("""post_id['"]?\s*[:=]\s*['"]?(\d{3,})['"]?""").find(scriptsText)?.groups?.get(1)?.value?.let { return it }
-            Regex("""postid['"]?\s*[:=]\s*['"]?(\d{3,})['"]?""").find(scriptsText)?.groups?.get(1)?.value?.let { return it }
-            return null
+        val seasonCards = doc.select(".seasonDiv")
+        val seasonUrlRegex = Regex("""window\.location\.href\s*=\s*['"]([^'"]+)['"]""")
+        val recommendations = seasonCards.mapNotNull { seasonEl ->
+            val onclickAttr = seasonEl.attr("onclick")
+            val seasonUrlRel =
+                seasonUrlRegex.find(onclickAttr)?.groupValues?.get(1) ?: return@mapNotNull null
+            val seasonTitle = seasonEl.selectFirst(".title")?.text() ?: "موسم"
+            val seasonPoster =
+                seasonEl.selectFirst("img")?.attr("data-src") ?: seasonEl.selectFirst("img")
+                    ?.attr("src")
+            newTvSeriesSearchResponse(seasonTitle, fixUrl(seasonUrlRel), TvType.TvSeries) {
+                this.posterUrl = seasonPoster
+                this.posterHeaders = headers
+            }
         }
 
-        fun extractEpisodeNumberFromText(text: String?): String? {
-            if (text.isNullOrBlank()) return null
-            Regex("""الحلقة\s*(\d+)""").find(text)?.groups?.get(1)?.value?.let { return it }
-            Regex("""\b(\d{1,3})\b""").find(text)?.groups?.get(1)?.value?.let { return it }
-            return null
+        data class SeasonTask(val name: String, val url: String, val poster: String?)
+
+        val seasonTasks = mutableListOf<SeasonTask>()
+        seasonCards.forEachIndexed { idx, seasonEl ->
+            val onclickAttr = seasonEl.attr("onclick")
+            val seasonUrlRel = seasonUrlRegex.find(onclickAttr)?.groupValues?.get(1)
+            if (!seasonUrlRel.isNullOrBlank()) {
+                val seasonUrl = fixUrl(seasonUrlRel)
+                val seasonName =
+                    seasonEl.selectFirst(".title")?.text()?.trim() ?: "الموسم ${idx + 1}"
+                val seasonPoster =
+                    seasonEl.selectFirst("img")?.attr("data-src") ?: seasonEl.selectFirst("img")
+                        ?.attr("src")
+                seasonTasks.add(SeasonTask(seasonName, seasonUrl, seasonPoster))
+            }
         }
 
-        fun resolveUrl(base: String, relative: String): String {
-            return try {
-                val u = java.net.URL(java.net.URL(base), relative)
-                u.toString()
+        val allEpisodes = mutableListOf<Episode>()
+
+        if (seasonTasks.isNotEmpty()) {
+            val semaphore = Semaphore(5)
+            try {
+                val results: List<Pair<Int, List<Episode>>> = coroutineScope {
+                    seasonTasks.mapIndexed { idx, task ->
+                        async(Dispatchers.IO) {
+                            semaphore.acquire()
+                            try {
+                                val seasonDoc = smartGet(task.url)
+                                val episodeElements = seasonDoc.select("div#epAll a")
+                                val eps = mutableListOf<Episode>()
+                                val seasonPosterUrl = task.poster?.let { fixUrlNull(it) } ?: poster
+
+                                if (episodeElements.isNotEmpty()) {
+                                    episodeElements.forEach { el ->
+                                        val epUrlRaw = el.attr("href").trim()
+                                        if (epUrlRaw.isNotBlank()) {
+                                            val epTitle = el.ownText().ifBlank { el.text() }.trim()
+                                            if (!epTitle.contains("باقي الحلقات") && !epTitle.contains(
+                                                    "المزيد"
+                                                )
+                                            ) {
+                                                val epNum =
+                                                    Regex("""\d+""").find(epTitle)?.value?.toIntOrNull()
+                                                eps.add(newEpisode(fixUrl(epUrlRaw)) {
+                                                    name = epTitle
+                                                    episode = epNum
+                                                    season = idx + 1
+                                                    posterUrl = seasonPosterUrl
+                                                })
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    val fallback = seasonDoc.select("a[href]").mapNotNull { a ->
+                                        val h = a.attr("href").trim()
+                                        val text = a.ownText().ifBlank { a.text() }.trim()
+                                        if (h.isBlank()) return@mapNotNull null
+                                        if (text.contains("حلقة") || h.contains("/?p=") || h.contains(
+                                                "/?ep="
+                                            ) || h.contains("/episode-")
+                                        ) {
+                                            val epNum =
+                                                Regex("""\d+""").find(text)?.value?.toIntOrNull()
+                                            newEpisode(fixUrl(h)) {
+                                                name = text
+                                                episode = epNum
+                                                season = idx + 1
+                                                posterUrl = seasonPosterUrl
+                                            }
+                                        } else null
+                                    }
+                                    eps.addAll(fallback)
+                                }
+                                Pair(idx, eps.toList())
+                            } catch (e: Exception) {
+                                Pair(idx, emptyList())
+                            } finally {
+                                semaphore.release()
+                            }
+                        }
+                    }.awaitAll()
+                }
+                results.sortedBy { it.first }.forEach { (_, eps) -> allEpisodes.addAll(eps) }
             } catch (e: Exception) {
-                if (relative.startsWith("http")) relative else mainUrl.trimEnd('/') + "/" + relative.trimStart('/')
             }
+        } else {
+            val seasonNumFromName = doc.selectFirst(".singleInfo .title.h1")?.text()
+                ?.let { Regex("""\d+""").find(it)?.value?.toIntOrNull() } ?: 1
+            val eps = doc.select("div#epAll a").mapNotNull { el ->
+                val epUrl = el.attr("href").trim()
+                if (epUrl.isBlank()) return@mapNotNull null
+                val epName = el.ownText().ifBlank { el.text() }.trim()
+                if (epName.contains("باقي الحلقات") || epName.contains("المزيد")) return@mapNotNull null
+                val epNum = Regex("""\d+""").find(epName)?.value?.toIntOrNull()
+                newEpisode(fixUrl(epUrl)) {
+                    name = epName
+                    episode = epNum
+                    season = seasonNumFromName
+                    posterUrl = poster
+                }
+            }
+            allEpisodes.addAll(eps)
         }
 
-        if (isSeriesPage) {
-            val episodes = mutableListOf<Episode>()
-            val postId = extractPostId(document)
-            val ajaxUrl = "$mainUrl/wp-content/themes/mycima/Ajaxt/Single/Episodes.php"
-
-            var seasonAnchors = document.select("div.SeasonsList ul li a")
-            if (seasonAnchors.isEmpty()) {
-                seasonAnchors = document.select(".Seasons--Episodes ul li a")
-            }
-
-            if (seasonAnchors.isEmpty()) {
-                val globalAnchors = document.select("div.EpisodesList a[href], a.episode[href]")
-                for (a in globalAnchors) {
-                    val epTitleRaw = a.selectFirst(".episodetitle")?.text() ?: a.attr("title").ifBlank { a.text() }
-                    val epNumText = extractEpisodeNumberFromText(epTitleRaw)
-                    val epNum = epNumText?.toIntOrNull()
-                    val newTitle = if (epNum != null) "الحلقة $epNum" else (epTitleRaw ?: "حلقة")
-                    var epHref = a.attr("href").ifBlank { a.attr("data-href") }
-                    if (epHref.isNullOrBlank()) continue
-                    epHref = resolveUrl(url, epHref)
-                    episodes.add(newEpisode(epHref) {
-                        this.name = newTitle
-                        this.season = null
-                        this.episode = epNum
-                        this.posterUrl = poster
-                    })
-                }
-
-                val distinctEpisodes = episodes.distinctBy { it.data }
-                return newTvSeriesLoadResponse(title, url, TvType.TvSeries, distinctEpisodes) {
-                    this.posterUrl = poster
-                    this.year = year
-                    this.plot = plot
-                    this.tags = tags
-                    this.recommendations = recommendations
-                }
-            }
-
-            for ((seasonIndex, seasonEl) in seasonAnchors.withIndex()) {
-                val rawSeasonText = seasonEl.text().trim()
-                val seasonIdRaw = seasonEl.attr("data-season").ifBlank { seasonEl.attr("data-season-id") }
-                val seasonHrefRaw = seasonEl.attr("href").ifBlank { seasonEl.attr("data-href") }
-
-                val seasonNumFromText = extractNumbers(rawSeasonText)
-                val seasonNumFromId = extractNumbers(seasonIdRaw)?.takeIf { seasonIdRaw.length <= 3 }
-                val seasonNumber = seasonNumFromText ?: seasonNumFromId ?: (seasonIndex + 1)
-
-                val seasonLabel = when {
-                    rawSeasonText.isNotBlank() && !rawSeasonText.matches(Regex("^\\d{3,}\$")) -> {
-                        if (rawSeasonText.matches(Regex("^\\d{1,3}\$"))) "الموسم $rawSeasonText" else rawSeasonText
-                    }
-                    else -> "الموسم $seasonNumber"
-                }
-
-                var gotEpisodesForThisSeason = false
-                var localEpisodeCounter = 0
-
-                if (seasonIdRaw.isNotBlank() && !postId.isNullOrBlank()) {
-                    try {
-                        val postData = mapOf("season" to seasonIdRaw, "post_id" to postId)
-                        val seasonDoc = smartPost(ajaxUrl, data = postData, referer = url, timeoutSeconds = 10_000L)
-                        val anchors = seasonDoc.select("a[href]").ifEmpty { seasonDoc.select("div.EpisodesList a[href]") }
-                        if (anchors.isNotEmpty()) {
-                            for (a in anchors) {
-                                val epTitleRaw = a.selectFirst(".episodetitle")?.text() ?: a.attr("title").ifBlank { a.text() }
-                                val epNumText = extractEpisodeNumberFromText(epTitleRaw)
-                                val epNum = epNumText?.toIntOrNull() ?: run {
-                                    localEpisodeCounter += 1
-                                    localEpisodeCounter
-                                }
-                                var epHref = a.attr("href").ifBlank { a.attr("data-href") }
-                                if (epHref.isNullOrBlank()) continue
-                                epHref = resolveUrl(url, epHref)
-                                episodes.add(newEpisode(epHref) {
-                                    this.name = "$seasonLabel الحلقة $epNum"
-                                    this.season = seasonNumber
-                                    this.episode = epNum
-                                    this.posterUrl = poster
-                                })
-                            }
-                            gotEpisodesForThisSeason = true
-                        }
-                    } catch (_: Exception) {}
-                }
-
-                if (gotEpisodesForThisSeason) continue
-
-                if (!seasonHrefRaw.isNullOrBlank()) {
-                    try {
-                        val resolvedSeasonHref = resolveUrl(url, seasonHrefRaw)
-                        val seasonDoc = smartGet(resolvedSeasonHref, referer = url, timeoutSeconds = 10_000L)
-                        val anchors = seasonDoc.select("div.EpisodesList a[href], a[href]").filter {
-                            it.closest(".SeasonsList") == null
-                        }
-                        if (anchors.isNotEmpty()) {
-                            for (a in anchors) {
-                                val epTitleRaw = a.selectFirst(".episodetitle")?.text() ?: a.attr("title").ifBlank { a.text() }
-                                val epNumText = extractEpisodeNumberFromText(epTitleRaw)
-                                val epNum = epNumText?.toIntOrNull() ?: run {
-                                    localEpisodeCounter += 1
-                                    localEpisodeCounter
-                                }
-                                var epHref = a.attr("href").ifBlank { a.attr("data-href") }
-                                if (epHref.isNullOrBlank()) continue
-                                epHref = resolveUrl(url, epHref)
-                                episodes.add(newEpisode(epHref) {
-                                    this.name = "$seasonLabel الحلقة $epNum"
-                                    this.season = seasonNumber
-                                    this.episode = epNum
-                                    this.posterUrl = poster
-                                })
-                            }
-                            gotEpisodesForThisSeason = true
-                        }
-                    } catch (_: Exception) {}
-                }
-
-                if (gotEpisodesForThisSeason) continue
-
-                val fallbackBlocks = document.select("div.SeasonsList, .Seasons--Episodes")
-                if (fallbackBlocks.isNotEmpty()) {
-                    val matchingBlock = fallbackBlocks.getOrNull(seasonIndex) ?: fallbackBlocks.firstOrNull()
-                    matchingBlock?.select("div.EpisodesList a[href], a[href]")?.let { anchors ->
-                        if (anchors.isNotEmpty()) {
-                            for (a in anchors) {
-                                val epTitleRaw = a.selectFirst(".episodetitle")?.text() ?: a.attr("title").ifBlank { a.text() }
-                                val epNumText = extractEpisodeNumberFromText(epTitleRaw)
-                                val epNum = epNumText?.toIntOrNull() ?: run {
-                                    localEpisodeCounter += 1
-                                    localEpisodeCounter
-                                }
-                                var epHref = a.attr("href").ifBlank { a.attr("data-href") }
-                                if (epHref.isNullOrBlank()) continue
-                                epHref = resolveUrl(url, epHref)
-                                episodes.add(newEpisode(epHref) {
-                                    this.name = "$seasonLabel الحلقة $epNum"
-                                    this.season = seasonNumber
-                                    this.episode = epNum
-                                    this.posterUrl = poster
-                                })
-                            }
-                            gotEpisodesForThisSeason = true
-                        }
-                    }
-                }
-            }
-
-            val distinctEpisodes = episodes.distinctBy { it.data }
-
-            return newTvSeriesLoadResponse(title, url, TvType.TvSeries, distinctEpisodes) {
+        return if (allEpisodes.isNotEmpty()) {
+            newTvSeriesLoadResponse(title, url, TvType.TvSeries, allEpisodes) {
                 this.posterUrl = poster
+                this.posterHeaders = headers
+                this.backgroundPosterUrl = backgroundPoster
                 this.year = year
                 this.plot = plot
-                this.tags = tags
+                this.tags = tagsList
                 this.recommendations = recommendations
             }
-        } else if (seriesUrlFromEpisode != null) {
-            return load(seriesUrlFromEpisode)
         } else {
-            return newMovieLoadResponse(title, url, TvType.Movie, url) {
+            newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = poster
+                this.posterHeaders = headers
+                this.backgroundPosterUrl = backgroundPoster
                 this.year = year
                 this.plot = plot
-                this.tags = tags
+                this.tags = tagsList
                 this.recommendations = recommendations
             }
         }
     }
 
-    // ================================
-    //     Load Links
-    // ================================
+
+
+    private fun extractIframeSources(doc: Document): List<String> {
+        val results = mutableSetOf<String>()
+
+        Log.d("FASELHD_IFRAME", "========== START iframe extraction ==========")
+
+        // 🧪 معلومات عامة
+        Log.d("FASELHD_IFRAME", "Document URL: ${doc.baseUri()}")
+        Log.d("FASELHD_IFRAME", "HTML length: ${doc.html().length}")
+
+        // ===============================
+        // 1️⃣ iframe مباشر
+        // ===============================
+        val iframeEls = doc.select("iframe[src]")
+        Log.d("FASELHD_IFRAME", "Direct iframe count: ${iframeEls.size}")
+
+        iframeEls.forEachIndexed { i, el ->
+            val src = el.attr("src")
+            Log.d("FASELHD_IFRAME", "iframe[$i] src = $src")
+            if (src.isNotBlank()) {
+                results.add(fixUrl(src))
+            }
+        }
+
+        // ===============================
+        // 2️⃣ onclick
+        // ===============================
+        val onClickRegex =
+            Regex("""player_iframe\.location\.href\s*=\s*['"]([^'"]+)['"]""")
+
+        val onclickEls = doc.select("[onclick]")
+        Log.d("FASELHD_IFRAME", "Elements with onclick: ${onclickEls.size}")
+
+        onclickEls.forEachIndexed { i, el ->
+            val onclick = el.attr("onclick")
+            Log.d("FASELHD_IFRAME", "onclick[$i] = $onclick")
+
+            val match = onClickRegex.find(onclick)
+            if (match != null) {
+                val url = match.groupValues[1]
+                Log.d("FASELHD_IFRAME", "✔ onclick MATCH → $url")
+                results.add(fixUrl(url))
+            }
+        }
+
+        // ===============================
+        // 3️⃣ script
+        // ===============================
+        val scriptRegex = Regex("""https?://[^\s"'<>]+""")
+        val scripts = doc.select("script")
+
+        Log.d("FASELHD_IFRAME", "Script tags count: ${scripts.size}")
+
+        scripts.forEachIndexed { i, s ->
+            val data = s.data()
+            if (data.isBlank()) return@forEachIndexed
+
+            Log.d("FASELHD_IFRAME", "script[$i] length = ${data.length}")
+
+            scriptRegex.findAll(data).forEach { m ->
+                val url = m.value
+                Log.d("FASELHD_IFRAME", "script[$i] found url = $url")
+
+                if (url.contains("player") || url.contains("embed")) {
+                    Log.d("FASELHD_IFRAME", "✔ script MATCH → $url")
+                    results.add(fixUrl(url))
+                }
+            }
+        }
+
+        // ===============================
+        // 4️⃣ shortLink / liskSh
+        // ===============================
+        val shortEls = doc.select("div.shortLink, span#liskSh, a[data-src]")
+        Log.d("FASELHD_IFRAME", "ShortLink elements count: ${shortEls.size}")
+
+        shortEls.forEachIndexed { i, el ->
+            val text = el.text().trim()
+            Log.d("FASELHD_IFRAME", "short[$i] text = $text")
+
+            if (text.startsWith("http")) {
+                Log.d("FASELHD_IFRAME", "✔ shortLink MATCH → $text")
+                results.add(fixUrl(text))
+            }
+        }
+
+        // ===============================
+        // النتيجة النهائية
+        // ===============================
+        Log.d("FASELHD_IFRAME", "========== RESULT ==========")
+        results.forEachIndexed { i, url ->
+            Log.d("FASELHD_IFRAME", "FINAL[$i] = $url")
+        }
+
+        Log.d(
+            "FASELHD_IFRAME",
+            "Total iframe/player URLs found: ${results.size}"
+        )
+
+        Log.d("FASELHD_IFRAME", "========== END iframe extraction ==========")
+
+        return results.toList()
+    }
+
+
+
+
+
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private suspend fun resolveWithWebView(
+        iframeUrl: String,
+        referer: String
+    ): String? = suspendCancellableCoroutine { cont ->
+
+        val activity = context as? Activity
+        if (activity == null || activity.isFinishing) {
+            cont.resume(null)
+            return@suspendCancellableCoroutine
+        }
+
+        activity.runOnUiThread {
+            // === Headless / invisible Dialog + WebView setup ===
+            val dialog = Dialog(activity)
+            dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+            dialog.setCancelable(false)
+            // make dialog fully non-interactive and transparent
+            dialog.window?.apply {
+                setBackgroundDrawableResource(android.R.color.transparent)
+                clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                addFlags(
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                )
+            }
+
+            // Create a single-pixel WebView (invisible)
+            val webView = WebView(activity).apply {
+                layoutParams = ViewGroup.LayoutParams(1, 1)
+                visibility = View.INVISIBLE
+                isHorizontalScrollBarEnabled = false
+                isVerticalScrollBarEnabled = false
+            }
+
+            // Put the WebView into the dialog as its content (so it's attached to window)
+            try {
+                dialog.setContentView(webView, ViewGroup.LayoutParams(1, 1))
+                // move the window far off-screen to be extra-safe (some OEMs may still show)
+                dialog.window?.attributes = dialog.window?.attributes?.apply {
+                    width = 1
+                    height = 1
+                    x = -10000
+                    y = -10000
+                    gravity = Gravity.START or Gravity.TOP
+                }
+                dialog.show()
+            } catch (e: Exception) {
+                // fallback: attach to activity content view
+                try {
+                    val decor = activity.window?.decorView as? ViewGroup
+                    decor?.addView(webView, FrameLayout.LayoutParams(1, 1, Gravity.START or Gravity.TOP))
+                } catch (_: Exception) { }
+            }
+
+            // WebView settings
+            val settings = webView.settings
+            settings.apply {
+                javaScriptEnabled = true
+                domStorageEnabled = true
+                databaseEnabled = true
+                allowContentAccess = true
+                allowFileAccess = true
+                allowFileAccessFromFileURLs = true
+                allowUniversalAccessFromFileURLs = true
+                javaScriptCanOpenWindowsAutomatically = true
+                mediaPlaybackRequiresUserGesture = false
+                loadWithOverviewMode = true
+                useWideViewPort = true
+                builtInZoomControls = true
+                displayZoomControls = false
+                setSupportMultipleWindows(true)
+                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                cacheMode = WebSettings.LOAD_DEFAULT
+                userAgentString = lastValidUserAgent
+            }
+
+            val cookieManager = CookieManager.getInstance()
+            try {
+                cookieManager.setAcceptCookie(true)
+                cookieManager.setAcceptThirdPartyCookies(webView, true)
+                cookieManager.flush()
+            } catch (_: Exception) { }
+
+            val client = app.baseClient.newBuilder()
+                .followRedirects(true)
+                .followSslRedirects(true)
+                .cookieJar(okhttp3.CookieJar.NO_COOKIES)
+                .build()
+
+            // storage & synchronization
+            val foundM3u8 = linkedSetOf<String>()
+            var finished = false
+            val finishLock = Any()
+            val handler = Handler(Looper.getMainLooper())
+            var finishRunnable: Runnable? = null
+            val overallTimeoutMs = 20_000L
+
+            fun cleanup() {
+                try {
+                    if (webView.parent is ViewGroup) {
+                        (webView.parent as ViewGroup).removeView(webView)
+                    }
+                } catch (_: Exception) {}
+                try { webView.stopLoading() } catch (_: Exception) {}
+                try { webView.destroy() } catch (_: Exception) {}
+                try { cookieManager.flush() } catch (_: Exception) {}
+                try { if (dialog.isShowing) dialog.dismiss() } catch (_: Exception) {}
+            }
+
+            fun safeFinish(result: String?) {
+                synchronized(finishLock) {
+                    if (finished) return
+                    finished = true
+                }
+                try {
+                    if (cont.isActive) cont.resume(result)
+                } catch (_: Exception) {}
+                cleanup()
+            }
+
+            fun chooseAndFinish() {
+                if (foundM3u8.isEmpty()) {
+                    safeFinish(null)
+                    return
+                }
+                // prefer strict .m3u8 path (avoid analytics ping with m3u8 in query)
+                val strict = foundM3u8.firstOrNull {
+                    val clean = it.substringBefore("?")
+                    clean.endsWith(".m3u8") && (clean.contains("master") || clean.contains("playlist") || clean.contains("index"))
+                } ?: foundM3u8.firstOrNull { it.substringBefore("?").endsWith(".m3u8") }
+                val final = strict ?: foundM3u8.first()
+                safeFinish(final)
+            }
+
+            handler.postDelayed({
+                synchronized(finishLock) {
+                    if (!finished) chooseAndFinish()
+                }
+            }, overallTimeoutMs)
+
+            // Shared WebViewClient (store then assign to avoid getWebViewClient on older APIs)
+            lateinit var sharedWebViewClient: WebViewClient
+            sharedWebViewClient = object : WebViewClient() {
+
+                override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                    Log.d("FASEL_DEBUG", "Headless Page Started: $url")
+                    super.onPageStarted(view, url, favicon)
+                }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    try {
+                        // inject sniffer + force play + jw read
+                        val js = """
+                        (function() {
+                            try {
+                                if (!window.__NET_HOOKED__) {
+                                    window.__NET_HOOKED__ = true;
+                                    // hook fetch
+                                    const _fetch = window.fetch;
+                                    if (_fetch) {
+                                        window.fetch = function() {
+                                            return _fetch.apply(this, arguments).then(function(resp) {
+                                                try {
+                                                    const u = resp && resp.url ? resp.url : '';
+                                                    if (u && u.indexOf('.m3u8') !== -1) {
+                                                        console.log('NET_M3U8::' + u);
+                                                    }
+                                                    try {
+                                                        resp.clone().text().then(function(t){
+                                                            var m = t && t.match(/https?:\/\/[^"'\\s]+\\.m3u8/);
+                                                            if (m) console.log('NET_M3U8::' + m[0]);
+                                                        }).catch(function(){});
+                                                    } catch(e){}
+                                                } catch(e){}
+                                                return resp;
+                                            });
+                                        };
+                                    }
+                                    // hook XHR
+                                    const _open = XMLHttpRequest.prototype.open;
+                                    XMLHttpRequest.prototype.open = function(method, u) {
+                                        this.addEventListener('load', function() {
+                                            try {
+                                                if (typeof u === 'string' && u.indexOf('.m3u8') !== -1) {
+                                                    console.log('NET_M3U8::' + u);
+                                                }
+                                                try {
+                                                    var txt = this.responseText || '';
+                                                    var m = txt && txt.match(/https?:\/\/[^"'\\s]+\\.m3u8/);
+                                                    if (m) console.log('NET_M3U8::' + m[0]);
+                                                } catch(e){}
+                                            } catch(e){}
+                                        });
+                                        return _open.apply(this, arguments);
+                                    };
+                                    console.log('🌐 Network sniffer installed');
+                                }
+                                // force play attempts (jw api + clicks)
+                                try {
+                                    if (typeof jwplayer === 'function') {
+                                        try {
+                                            var p = jwplayer();
+                                            if (p && typeof p.play === 'function') {
+                                                try { p.setMute(true); } catch(e) {}
+                                                try { p.play(); console.log('JW_API_PLAY'); } catch(e) {}
+                                            }
+                                        } catch(e){}
+                                    }
+                                } catch(e){}
+                                var sels = ['.jw-display-icon-container','.jw-icon-play','.jw-svg-icon-play','.jw-display','.jwplayer','#player','.player','video'];
+                                for (var i=0;i<sels.length;i++){
+                                    try {
+                                        var el = document.querySelector(sels[i]);
+                                        if (el) { el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); console.log('FORCE_CLICK:'+sels[i]); }
+                                    } catch(e){}
+                                }
+                                // read jw playlist
+                                try {
+                                    if (typeof jwplayer === 'function') {
+                                        try {
+                                            var p2 = jwplayer();
+                                            if (p2 && typeof p2.getPlaylist === 'function') {
+                                                var pl = p2.getPlaylist();
+                                                if (pl && pl.length>0 && pl[0].sources) {
+                                                    pl[0].sources.forEach(function(s){
+                                                        try {
+                                                            if (s && s.file && s.file.indexOf('.m3u8') !== -1) {
+                                                                console.log('JW_M3U8::' + s.file);
+                                                            }
+                                                        } catch(e){}
+                                                    });
+                                                }
+                                            }
+                                        } catch(e){}
+                                    }
+                                } catch(e){}
+                            } catch(err){}
+                        })();
+                    """.trimIndent()
+                        try { view?.evaluateJavascript(js, null) } catch (_: Exception) {}
+                    } catch (_: Exception) {}
+                }
+
+                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                    val url = request.url.toString()
+                    val method = request.method
+                    val lower = url.lowercase()
+
+                    // ignore images/fonts/styles
+                    if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".woff2") || lower.endsWith(".css")) {
+                        return super.shouldInterceptRequest(view, request)
+                    }
+
+                    // only intercept real .m3u8 files (path ends with .m3u8)
+                    if (method.equals("GET", ignoreCase = true) &&
+                        lower.contains(".m3u8") &&
+                        lower.substringBefore("?").endsWith(".m3u8")
+                    ) {
+                        try {
+                            Log.d("FASEL_DEBUG", "Headless M3U8 detected (collecting): $url")
+                            synchronized(foundM3u8) {
+                                if (!foundM3u8.contains(url)) {
+                                    foundM3u8.add(url)
+                                    if (lower.contains("master") || lower.contains("playlist") || lower.contains("index.m3u8")) {
+                                        finishRunnable?.let { handler.removeCallbacks(it) }
+                                        finishRunnable = Runnable { chooseAndFinish() }
+                                        handler.postDelayed(finishRunnable!!, 1200)
+                                    } else {
+                                        if (finishRunnable == null) {
+                                            finishRunnable = Runnable { chooseAndFinish() }
+                                            handler.postDelayed(finishRunnable!!, 6000)
+                                        }
+                                    }
+                                }
+                            }
+
+                            // proxy via OkHttp to pass headers/cookies
+                            val reqBuilder = OkRequest.Builder().url(url)
+                                .header("User-Agent", lastValidUserAgent)
+                                .header("Referer", referer)
+                                .header("Origin", mainUrl)
+                            try { cookieManager.getCookie(url)?.let { ck -> reqBuilder.header("Cookie", ck) } } catch (_: Exception) {}
+                            val response = client.newCall(reqBuilder.build()).execute()
+                            if (!response.isSuccessful) {
+                                Log.d("FASEL_DEBUG", "Proxy error ${response.code} for $url")
+                                return null
+                            }
+                            response.headers("Set-Cookie").forEach { try { cookieManager.setCookie(url, it) } catch (_: Exception) {} }
+                            val contentType = response.header("content-type")?.split(";")?.first() ?: "application/vnd.apple.mpegurl"
+                            val encoding = "utf-8"
+                            val stream = response.body?.byteStream()
+                            return WebResourceResponse(contentType, encoding, stream)
+                        } catch (e: Exception) {
+                            Log.d("FASEL_DEBUG", "Proxy fail for $url : ${e.message}")
+                            return null
+                        }
+                    }
+
+                    // proxy other player resources to ensure correct headers
+                    if (method.equals("GET", ignoreCase = true) &&
+                        (lower.contains("fasel") || lower.contains("jwplayer") || lower.contains("config") || lower.contains("player"))
+                    ) {
+                        try {
+                            val reqBuilder = OkRequest.Builder().url(url)
+                                .header("User-Agent", lastValidUserAgent)
+                                .header("Referer", referer)
+                                .header("Origin", mainUrl)
+                            try { cookieManager.getCookie(url)?.let { ck -> reqBuilder.header("Cookie", ck) } } catch (_: Exception) {}
+                            val response = client.newCall(reqBuilder.build()).execute()
+                            response.headers("Set-Cookie").forEach { try { cookieManager.setCookie(url, it) } catch (_: Exception) {} }
+                            val contentType = response.header("content-type")?.split(";")?.first() ?: "text/html"
+                            val encoding = "utf-8"
+                            val stream = response.body?.byteStream()
+                            return WebResourceResponse(contentType, encoding, stream)
+                        } catch (e: Exception) {
+                            return super.shouldInterceptRequest(view, request)
+                        }
+                    }
+
+                    return super.shouldInterceptRequest(view, request)
+                }
+            }
+
+            // assign shared client to main webView
+            webView.webViewClient = sharedWebViewClient
+
+            // WebChromeClient to capture console logs from injected JS
+            webView.webChromeClient = object : WebChromeClient() {
+                override fun onConsoleMessage(cm: ConsoleMessage?): Boolean {
+                    val msg = cm?.message() ?: ""
+                    try {
+                        if (msg.startsWith("NET_M3U8::")) {
+                            val url = msg.substringAfter("NET_M3U8::").trim()
+                            val clean = url.substringBefore("?")
+                            if (clean.endsWith(".m3u8")) {
+                                synchronized(foundM3u8) {
+                                    if (!foundM3u8.contains(url)) foundM3u8.add(url)
+                                }
+                                // quick finish for master/playlist/index
+                                if (clean.contains("master") || clean.contains("playlist") || clean.contains("index")) {
+                                    finishRunnable?.let { handler.removeCallbacks(it) }
+                                    finishRunnable = Runnable { chooseAndFinish() }
+                                    handler.postDelayed(finishRunnable!!, 600)
+                                } else {
+                                    if (finishRunnable == null) {
+                                        finishRunnable = Runnable { chooseAndFinish() }
+                                        handler.postDelayed(finishRunnable!!, 3000)
+                                    }
+                                }
+                            }
+                        } else if (msg.startsWith("JW_M3U8::")) {
+                            val url = msg.removePrefix("JW_M3U8::").trim()
+                            val clean = url.substringBefore("?")
+                            if (clean.endsWith(".m3u8")) {
+                                synchronized(foundM3u8) {
+                                    if (!foundM3u8.contains(url)) foundM3u8.add(url)
+                                }
+                                finishRunnable?.let { handler.removeCallbacks(it) }
+                                finishRunnable = Runnable { chooseAndFinish() }
+                                handler.postDelayed(finishRunnable!!, 600)
+                            }
+                        }
+                    } catch (_: Exception) {}
+                    return true
+                }
+
+                override fun onCreateWindow(
+                    view: WebView?,
+                    isDialog: Boolean,
+                    isUserGesture: Boolean,
+                    resultMsg: android.os.Message?
+                ): Boolean {
+                    try {
+                        val transport = resultMsg?.obj as? WebView.WebViewTransport
+                        val newWebView = WebView(activity).apply {
+                            layoutParams = FrameLayout.LayoutParams(1, 1, Gravity.START or Gravity.TOP)
+                            visibility = View.INVISIBLE
+                        }
+                        newWebView.settings.apply {
+                            javaScriptEnabled = true
+                            domStorageEnabled = true
+                            mediaPlaybackRequiresUserGesture = false
+                            loadWithOverviewMode = true
+                            useWideViewPort = true
+                            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                            userAgentString = lastValidUserAgent
+                        }
+                        // attach newWebView to view hierarchy quietly
+                        try {
+                            val decor = activity.window?.decorView as? ViewGroup
+                            decor?.addView(newWebView)
+                        } catch (_: Exception) {}
+                        // assign same clients (use shared reference)
+                        newWebView.webViewClient = sharedWebViewClient
+                        newWebView.webChromeClient = this
+                        transport?.webView = newWebView
+                        resultMsg?.sendToTarget()
+                        return true
+                    } catch (e: Exception) {
+                        Log.d("FASEL_DEBUG", "onCreateWindow failed: ${e.message}")
+                        return false
+                    }
+                }
+            }
+
+            // Load iframe using referer header
+            val finalUrl = iframeUrl.replace("&amp;", "&").trim()
+            try {
+                webView.loadUrl(finalUrl, mapOf("Referer" to referer))
+            } catch (e: Exception) {
+                safeFinish(null)
+            }
+
+            // cancellation handling
+            cont.invokeOnCancellation {
+                handler.post { safeFinish(null) }
+            }
+        }
+    }
+
 
     override suspend fun loadLinks(
         data: String,
@@ -608,54 +1141,45 @@ class CimaWbas(private val context: Context) : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = try {
-            smartGet(data)
-        } catch (e: Exception) {
+
+        // نجلب صفحة الحلقة للحصول على الكوكيز والبيانات
+        val doc = smartGet(data)
+
+        // نستخرج روابط الـ iframe باستخدام دالتك الممتازة
+        val iframeUrls = extractIframeSources(doc)
+
+        if (iframeUrls.isEmpty()) {
+            Log.e("FASELHD", "❌ No iframe found")
             return false
         }
 
-        val linksToProcess = mutableListOf<Pair<String, String>>() 
+        var foundLink = false
 
-        document.select("ul#watch li[data-watch]").forEach {
-            val url = it.attr("data-watch")
-            val name = extractServerName(it)
-            if (url.isNotBlank()) linksToProcess.add(url to name)
+        // نجرب الروابط المستخرجة (نستخدم distinct لمنع التكرار)
+        iframeUrls.distinct().forEach { iframeUrl ->
+            if (foundLink) return@forEach // إذا وجدنا رابط وتوقفنا
+
+            Log.d("FASELHD", "Testing iframe: $iframeUrl")
+
+            // نمرر الـ data (رابط صفحة الحلقة) كـ Referer
+            // هذا التعديل مهم لأن دالتك السابقة كانت لا تمرر Referer للـ WebView
+            val m3u8 = resolveWithWebView(iframeUrl, data)
+
+            if (!m3u8.isNullOrBlank()) {
+                foundLink = true
+
+                M3u8Helper.generateM3u8(
+                    source = name,
+                    streamUrl = m3u8,
+                    referer = iframeUrl, // هنا السيرفر يتوقع أن الطلب قادم من الـ iframe
+                    headers = mapOf(
+                        "Referer" to iframeUrl,
+                        "User-Agent" to lastValidUserAgent
+                    )
+                ).forEach(callback)
+            }
         }
 
-        document.select("ul.List--Download--Wecima--Single li a[href]").forEach {
-            val url = it.attr("href")
-            val name = it.selectFirst("quality")?.text()?.trim() ?: "تحميل"
-            if (url.isNotBlank()) linksToProcess.add(url to name)
-        }
-
-        coroutineScope {
-            linksToProcess.distinctBy { it.first }.map { (link, serverName) ->
-                async {
-                    val finalUrl = if (link.contains("govid.site")) {
-                        try {
-                            val govidDoc = smartGet(link, referer = data)
-                            govidDoc.selectFirst("iframe")?.attr("src")
-                        } catch (e: Exception) {
-                            null
-                        }
-                    } else if (link.contains("mycima.page/go/")) {
-                        try {
-                            val base64Part = link.substringAfterLast('/')
-                            base64Part.safeBase64Decode()
-                        } catch (e: Exception) {
-                            null
-                        }
-                    } else {
-                        link
-                    }
-
-                    if (!finalUrl.isNullOrBlank()) {
-                        loadExtractor(finalUrl, data, subtitleCallback, callback)
-                    }
-                }
-            }.awaitAll()
-        }
-
-        return true
+        return foundLink
     }
 }
