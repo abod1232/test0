@@ -419,7 +419,7 @@ dialog.setContentView(
                     }
                 }
             }
-            return HomePageResponse(lists.filter { it.list.isNotEmpty() }, hasNext = false)
+            return newHomePageResponse(lists.filter { it.list.isNotEmpty() }, hasNext = false)
         } else {
             val items = document.select(".postDiv, .blockMovie").mapNotNull { it.toSearchResult() }
             val hasNext = document.select("ul.pagination a[href*='/page/${page + 1}']").isNotEmpty()
