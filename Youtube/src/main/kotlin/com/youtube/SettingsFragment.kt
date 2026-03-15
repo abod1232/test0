@@ -30,32 +30,31 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
         val dialog = Dialog(requireContext())
 
-        val layout = LinearLayout(requireContext())
-        layout.orientation = LinearLayout.VERTICAL
+        val root = LinearLayout(requireContext())
+        root.orientation = LinearLayout.VERTICAL
 
-        val button = Button(requireContext())
-        button.text = "عرض الروابط"
+        val showLinksBtn = Button(requireContext())
+        showLinksBtn.text = "عرض الروابط"
 
         val webView = WebView(requireContext())
 
-        layout.addView(
-            button,
+        root.addView(
+            showLinksBtn,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         )
 
-        layout.addView(
+        root.addView(
             webView,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f
+                1200   // ارتفاع ثابت حتى يظهر
             )
         )
 
-        dialog.setContentView(layout)
+        dialog.setContentView(root)
 
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -69,8 +68,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
                 val url = request?.url.toString()
 
-                if (
-                    url.contains(".mp4") ||
+                if (url.contains(".mp4") ||
                     url.contains(".m3u8") ||
                     url.contains("videoplayback")
                 ) {
@@ -83,9 +81,9 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             }
         }
 
-        webView.loadUrl("https://web3156x.faselhdx.bid/main")
+        webView.loadUrl("https://web3156x.faselhdx.bid/")
 
-        button.setOnClickListener {
+        showLinksBtn.setOnClickListener {
             showLinks()
         }
 
@@ -114,9 +112,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
             for (link in links) {
 
-                val itemLayout = LinearLayout(requireContext())
-                itemLayout.orientation = LinearLayout.VERTICAL
-
                 val text = TextView(requireContext())
                 text.text = link
 
@@ -125,8 +120,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
                 copy.setOnClickListener {
 
-                    val clipboard =
-                        requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clipboard = requireContext()
+                        .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
 
                     val clip = ClipData.newPlainText("video", link)
 
@@ -139,10 +134,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                     ).show()
                 }
 
-                itemLayout.addView(text)
-                itemLayout.addView(copy)
-
-                layout.addView(itemLayout)
+                layout.addView(text)
+                layout.addView(copy)
             }
         }
 
