@@ -110,10 +110,10 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
                 imm.hideSoftInputFromWindow(urlInput.windowToken, 0)
 
-                // 🔴 تمرير الـ Referer والـ Origin (بعض المشغلات تطلبهما معاً)
+                // تمرير الـ Referer والـ Origin
                 val headers = mutableMapOf(
                     "Referer" to url,
-                    "Origin" to url.substringBeforeLast("/") // يستخرج رابط الموقع الأساسي
+                    "Origin" to url.substringBeforeLast("/") 
                 )
                 mainWebView.loadUrl(url, headers)
             }
@@ -134,36 +134,35 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     private fun setupVideoWebView(webView: WebView) {
         val settings = webView.settings
 
-        // 🔴 1. صلاحيات الجافاسكربت والتخزين (قصوى)
+        // 1. صلاحيات الجافاسكربت والتخزين (تم حذف setAppCacheEnabled للخطأ)
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.databaseEnabled = true
-        settings.setAppCacheEnabled(true) // ضروري لبعض المشغلات القديمة
         
-        // 🔴 2. صلاحيات التشغيل (يمنع المتصفح من إيقاف الفيديو)
+        // 2. صلاحيات التشغيل
         settings.mediaPlaybackRequiresUserGesture = false
         settings.allowFileAccess = true
         settings.allowContentAccess = true
         settings.allowFileAccessFromFileURLs = true
-        settings.allowUniversalAccessFromFileURLs = true // يتجاهل سياسات CORS داخل الويبفيو
+        settings.allowUniversalAccessFromFileURLs = true
 
-        // 🔴 3. صلاحيات النوافذ والـ iframes
+        // 3. صلاحيات النوافذ والـ iframes
         settings.javaScriptCanOpenWindowsAutomatically = true
         settings.setSupportMultipleWindows(true)
         
-        // 🔴 4. صلاحيات العرض والبروتوكولات
+        // 4. صلاحيات العرض والبروتوكولات
         settings.loadWithOverviewMode = true
         settings.useWideViewPort = true
-        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW // يسمح بتشغيل http داخل https
+        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         settings.cacheMode = WebSettings.LOAD_DEFAULT
 
-        // 🔴 5. انتحال شخصية متصفح كروم حقيقي على جهاز كمبيوتر (يخدع المشغل)
+        // 5. انتحال متصفح كروم حقيقي على جهاز كمبيوتر
         settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-        // 🔴 6. تسريع الهاردوير لرسم الفيديو
+        // 6. تسريع الهاردوير
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
-        // 🔴 7. إعدادات الكوكيز (شاملة للـ iframes)
+        // 7. إعدادات الكوكيز
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
@@ -177,7 +176,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 resultMsg: android.os.Message?
             ): Boolean {
                 val newWebView = WebView(requireContext())
-                setupVideoWebView(newWebView) // يورث نفس الصلاحيات القصوى
+                setupVideoWebView(newWebView) 
 
                 newWebView.layoutParams = FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -208,19 +207,17 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url.toString()
                 
-                // 🔴 حماية إضافية من الروابط الخبيثة التي تدمر الـ WebView
                 if (url.startsWith("intent://") || url.startsWith("market://") || url.startsWith("tg://") || url.startsWith("viber://") || url.startsWith("whatsapp://")) {
                     return true 
                 }
                 
-                // السماح للروابط العادية بالتحميل داخل نفس النافذة
                 return false
             }
 
-            // 🔴 8. تجاوز أخطاء شهادات الأمان (SSL) التي تسبب شاشة سوداء لبعض السيرفرات
+            // 8. تجاوز أخطاء SSL
             @SuppressLint("WebViewClientOnReceivedSslError")
             override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: android.net.http.SslError?) {
-                handler?.proceed() // تجاهل الخطأ والمتابعة بالقوة
+                handler?.proceed() 
             }
         }
     }
