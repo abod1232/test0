@@ -191,7 +191,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         settings.allowFileAccess = true
         settings.allowFileAccessFromFileURLs = true
         settings.allowUniversalAccessFromFileURLs = true
-        settings.mediaPlaybackRequiresUserGesture = false // مهم للتشغيل التلقائي
+        // 🔴 السماح بتشغيل الميديا دون تدخل المستخدم
+        settings.mediaPlaybackRequiresUserGesture = false 
         
         settings.javaScriptCanOpenWindowsAutomatically = true
         settings.setSupportMultipleWindows(true)
@@ -234,7 +235,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             ): Boolean {
                 try {
                     val newWebView = WebView(requireContext())
-                    // النافذة الجديدة هي إعلان وليست المشغل الأساسي
                     setupFaselWebView(newWebView, copyBtn, isMainPlayer = false) 
 
                     // 🔴 سجن الإعلانات: نجعل حجم نافذة الإعلان 1x1 بكسل فقط لكي لا تظهر لك!
@@ -263,14 +263,14 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 
-                // 🔴 إذا كان هذا هو المشغل الرئيسي، نحقن كود التشغيل التلقائي والصيد
+                // 🔴 حقن كود فاصل بالكامل (الضغط العنيف واستخراج الشبكة)
                 if (isMainPlayer) {
                     val js = """
                     (function() {
-                        // 1. تثبيت صائد الروابط
                         try {
                             if (!window.__NET_HOOKED__) {
                                 window.__NET_HOOKED__ = true;
+                                // hook fetch
                                 const _fetch = window.fetch;
                                 if (_fetch) {
                                     window.fetch = function() {
@@ -283,6 +283,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                                         });
                                     };
                                 }
+                                // hook XHR
                                 const _open = XMLHttpRequest.prototype.open;
                                 XMLHttpRequest.prototype.open = function(method, u) {
                                     this.addEventListener('load', function() {
@@ -293,47 +294,51 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                                     return _open.apply(this, arguments);
                                 };
                             }
-                        } catch(err){}
 
-                        // 2. النقر التلقائي العنيف (يعمل كل نصف ثانية حتى يشتغل الفيديو)
-                        let clickAttempts = 0;
-                        let clickInterval = setInterval(function() {
-                            clickAttempts++;
-                            
-                            // أ. إخفاء طبقات الإعلانات الشفافة إن وجدت
-                            document.querySelectorAll('div').forEach(d => {
-                                if(d.style.zIndex > 1000) d.style.display = 'none';
-                            });
-
-                            // ب. محاولة تشغيل الفيديو مباشرة برمجياً
-                            let vids = document.querySelectorAll('video');
-                            vids.forEach(v => {
-                                if (v.paused) {
-                                    v.play().catch(e => {});
-                                }
-                            });
-
-                            // ج. النقر على أزرار التشغيل المعروفة
-                            var sels = ['.jw-video', '.jw-icon-display', '.vjs-big-play-button', '.plyr__control--overlaid', 'video', '#player'];
-                            for (var i=0;i<sels.length;i++){
+                            // دالة فاصل للضغط على المشغلات المختلفة (تعمل كل ثانية)
+                            setInterval(function() {
+                                // 1. JWPlayer API
                                 try {
-                                    var el = document.querySelector(sels[i]);
-                                    if (el) { el.click(); }
+                                    if (typeof jwplayer === 'function') {
+                                        var p = jwplayer();
+                                        if (p && typeof p.play === 'function' && p.getState() !== 'playing') {
+                                            // أزلنا setMute لكي تستمتع بالصوت لأننا فعلنا الخيار برمجياً
+                                            p.play(); 
+                                            console.log('JW_API_PLAY');
+                                        }
+                                    }
                                 } catch(e){}
-                            }
-
-                            // د. تشغيل مشغل JWPlayer عبر الـ API
-                            try {
-                                if (typeof jwplayer === 'function') {
-                                    let p = jwplayer();
-                                    if (p && p.getState() !== 'playing') p.play();
+                                
+                                // 2. الضغط على عناصر التشغيل المرئية
+                                var sels = ['.jw-display-icon-container','.jw-icon-play','.jw-svg-icon-play','.jw-display','.jwplayer','#player','.player','video','.vjs-big-play-button'];
+                                for (var i=0; i<sels.length; i++){
+                                    try {
+                                        var el = document.querySelector(sels[i]);
+                                        if (el) { 
+                                            el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); 
+                                        }
+                                    } catch(e){}
                                 }
-                            } catch(e){}
+                                
+                                // 3. استخراج قائمة التشغيل (Playlist) لـ JWPlayer إن وجدت
+                                try {
+                                    if (typeof jwplayer === 'function') {
+                                        var p2 = jwplayer();
+                                        if (p2 && typeof p2.getPlaylist === 'function') {
+                                            var pl = p2.getPlaylist();
+                                            if (pl && pl.length>0 && pl[0].sources) {
+                                                pl[0].sources.forEach(function(s){
+                                                    if (s && s.file && s.file.indexOf('.m3u8') !== -1) {
+                                                        console.log('JW_M3U8::' + s.file);
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    }
+                                } catch(e){}
+                            }, 1000);
 
-                            // إيقاف المحاولات بعد 10 ثوانٍ لمنع استهلاك المعالج
-                            if(clickAttempts > 20) clearInterval(clickInterval);
-
-                        }, 500);
+                        } catch(err){}
                     })();
                     """.trimIndent()
                     view?.evaluateJavascript(js, null)
@@ -343,10 +348,9 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url.toString()
 
-                // 🔴 تجميد الصفحة: إذا كان هذا هو المشغل الرئيسي، نمنع أي محاولة لتغيير رابط الصفحة الحالية!
+                // 🔴 تجميد الصفحة: إذا كان هذا هو المشغل الرئيسي، نمنع الإعلانات من نقله لصفحة أخرى
                 if (isMainPlayer && currentIframeUrl.isNotEmpty() && url != currentIframeUrl) {
-                    Log.d("FASEL_DEBUG", "Blocked Redirect to: $url")
-                    return true // إرجاع true يعني "تجاهل هذا الرابط ولا تنتقل إليه"
+                    return true 
                 }
 
                 if (url.startsWith("intent://") || url.startsWith("market://") || url.startsWith("tg://")) {
@@ -365,13 +369,14 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                     return super.shouldInterceptRequest(view, request)
                 }
 
-                // اصطياد m3u8 وإرساله عبر OkHttp
+                // اصطياد m3u8 وإرساله عبر OkHttp (كما في فاصل)
                 if (method.equals("GET", ignoreCase = true) &&
                     (lower.contains(".m3u8") || lower.contains(".mp4")) &&
                     !lower.endsWith(".js")
                 ) {
                     if (extractedVideoUrl == null) {
                         extractedVideoUrl = url
+                        Log.d("FASEL_DEBUG", "🎯 Captured via Network: $url")
                         Handler(Looper.getMainLooper()).post { copyBtn.visibility = View.VISIBLE }
                     }
                     
