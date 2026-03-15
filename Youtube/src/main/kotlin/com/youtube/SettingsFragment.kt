@@ -118,7 +118,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             }
         }
 
-        webView.loadUrl("https://web3156x.faselhdx.bid/")
+        webView.loadUrl("https://web3156x.faselhdx.bid/video_player?player_token=WTd1RVBsMFFXNzJQRk5vbU42ajFpdEwzZVFXWUxsankrM2dPVWpiR2g2RHN6MTVhbWgyVThyaFpnTTNENUwyMmpxdXh3cDg3azJIWWwzRStIOUdFMzcxS0VsQjVJVFNDUEJYRzFHb2U1VTB2ZDQybGIvZDVnekp3VFM0WS9qWmQ0RHhEWjNuaEJUVjNPUkJqQlFIQ1picEoyYXVqc0VEdDRjVjhvbXhuTUl5S1lSMW9rQVhYd2FRT1ZNWG5RMDJ1aGQwLzNkR205REJINEljWDdxUCs1VjJhUDBhWHVPczBYQzZpR0hwak9GQT06OsqKVDgdpX2BXtzDT%2BbKyJA%3D")
 
         backBtn.setOnClickListener {
 
