@@ -8,6 +8,19 @@
             
         ],
         "version": -1,
+        "internalName": "fasel",
+        "url": "https://github.com/abod1232/test0/raw/refs/heads/builds/Faselhd.cs3",
+        "name": "fasel"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/abod1232/test0",
+        "fileSize": 46143,
+        "status": 3,
+        "authors": [
+            
+        ],
+        "version": -1,
         "internalName": "Cimawbas",
         "url": "https://raw.githubusercontent.com/abod1232/test0/builds/Cimawbas.cs3",
         "name": "Cimawbas"
