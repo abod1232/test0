@@ -2,10 +2,6 @@ package com.youtube
 
 import android.annotation.SuppressLint
 import android.app.Dialog
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
 import android.webkit.*
@@ -15,7 +11,6 @@ import androidx.fragment.app.FragmentManager
 
 class YoutubeSettingsBottomSheet : DialogFragment() {
 
-    private val links = mutableListOf<String>()
     private lateinit var webView: WebView
 
     companion object {
@@ -32,47 +27,32 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         val root = LinearLayout(requireContext())
         root.orientation = LinearLayout.VERTICAL
 
-        // ===== Top controls =====
-
         val urlInput = EditText(requireContext())
-        urlInput.hint = "ادخل رابط الموقع"
+        urlInput.hint = "ادخل الرابط"
 
         val openBtn = Button(requireContext())
-        openBtn.text = "فتح الرابط"
+        openBtn.text = "فتح"
 
         val backBtn = Button(requireContext())
         backBtn.text = "رجوع"
 
-        val linksBtn = Button(requireContext())
-        linksBtn.text = "عرض الروابط"
-
-        val controls = LinearLayout(requireContext())
-        controls.orientation = LinearLayout.VERTICAL
-
-        controls.addView(urlInput)
-        controls.addView(openBtn)
-        controls.addView(backBtn)
-        controls.addView(linksBtn)
-
-        // ===== WebView =====
-
         webView = WebView(requireContext())
 
-        root.addView(controls)
+        root.addView(urlInput)
+        root.addView(openBtn)
+        root.addView(backBtn)
 
         root.addView(
             webView,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                1400
+                1500
             )
         )
 
         dialog.setContentView(root)
 
         setupWebView()
-
-        // ===== فتح الرابط =====
 
         openBtn.setOnClickListener {
 
@@ -85,8 +65,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             webView.loadUrl(url)
         }
 
-        // ===== زر الرجوع =====
-
         backBtn.setOnClickListener {
 
             if (webView.canGoBack()) {
@@ -94,16 +72,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             }
         }
 
-        // ===== عرض الروابط =====
-
-        linksBtn.setOnClickListener {
-            showLinks()
-        }
-
         return dialog
     }
-
-    // ===== إعداد WebView بصلاحيات كاملة =====
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
@@ -137,13 +107,33 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         settings.cacheMode = WebSettings.LOAD_DEFAULT
 
         settings.userAgentString =
-            "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36"
+            "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 Chrome/120.0 Safari/537.36"
 
         val cookieManager = CookieManager.getInstance()
+
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
 
-        webView.webChromeClient = object : WebChromeClient() {}
+        webView.webChromeClient = object : WebChromeClient() {
+
+            override fun onCreateWindow(
+                view: WebView?,
+                isDialog: Boolean,
+                isUserGesture: Boolean,
+                resultMsg: android.os.Message?
+            ): Boolean {
+
+                val newWebView = WebView(requireContext())
+
+                setupChildWebView(newWebView)
+
+                val transport = resultMsg?.obj as WebView.WebViewTransport
+                transport.webView = newWebView
+                resultMsg.sendToTarget()
+
+                return true
+            }
+        }
 
         webView.webViewClient = object : WebViewClient() {
 
@@ -155,82 +145,21 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 view?.loadUrl(request?.url.toString())
                 return true
             }
-
-            override fun shouldInterceptRequest(
-                view: WebView?,
-                request: WebResourceRequest?
-            ): WebResourceResponse? {
-
-                val url = request?.url.toString()
-
-                if (
-                    url.contains(".m3u8") ||
-                    url.contains(".mp4") ||
-                    url.contains(".mkv")
-                ) {
-
-                    if (!links.contains(url)) {
-                        links.add(url)
-                    }
-
-                }
-
-                return super.shouldInterceptRequest(view, request)
-            }
         }
     }
 
-    // ===== عرض الروابط =====
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun setupChildWebView(child: WebView) {
 
-    private fun showLinks() {
+        val settings = child.settings
 
-        val dialog = Dialog(requireContext())
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.mediaPlaybackRequiresUserGesture = false
+        settings.setSupportMultipleWindows(true)
+        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
 
-        val scroll = ScrollView(requireContext())
-        val layout = LinearLayout(requireContext())
-        layout.orientation = LinearLayout.VERTICAL
-
-        scroll.addView(layout)
-
-        if (links.isEmpty()) {
-
-            val text = TextView(requireContext())
-            text.text = "لا توجد روابط فيديو"
-
-            layout.addView(text)
-
-        } else {
-
-            for (link in links) {
-
-                val text = TextView(requireContext())
-                text.text = link
-
-                val copyBtn = Button(requireContext())
-                copyBtn.text = "نسخ الرابط"
-
-                copyBtn.setOnClickListener {
-
-                    val clipboard =
-                        requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-
-                    val clip = ClipData.newPlainText("video", link)
-
-                    clipboard.setPrimaryClip(clip)
-
-                    Toast.makeText(
-                        requireContext(),
-                        "تم نسخ الرابط",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-
-                layout.addView(text)
-                layout.addView(copyBtn)
-            }
-        }
-
-        dialog.setContentView(scroll)
-        dialog.show()
+        child.webViewClient = webView.webViewClient
+        child.webChromeClient = webView.webChromeClient
     }
 }
