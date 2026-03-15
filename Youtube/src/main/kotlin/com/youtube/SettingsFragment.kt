@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.app.Dialog
 import android.content.Context
 import android.graphics.Bitmap
+import android.net.http.SslError
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -24,6 +25,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
     private lateinit var webViewContainer: FrameLayout
     private lateinit var mainWebView: WebView
+    private lateinit var openBtn: Button // جعلناه متغير عام لكي نغير نصه أثناء التحميل
     
     // قائمة لتتبع النوافذ المنبثقة للإعلانات
     private val popupsList = mutableListOf<WebView>()
@@ -36,7 +38,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    // مجموعة لتخزين روابط m3u8 المكتشفة (للمراقبة/التسجيل)
+    // مجموعة لتخزين روابط m3u8 المكتشفة
     private val foundM3u8 = linkedSetOf<String>()
     
     private val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -51,7 +53,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         val dialog = Dialog(requireContext())
 
-        // 1. الواجهة الرئيسية
         val root = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = ViewGroup.LayoutParams(
@@ -60,25 +61,23 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             )
         }
 
-        // 2. شريط الإدخال والأزرار
         val controlsLayout = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(10, 10, 10, 10)
         }
 
         val urlInput = EditText(requireContext()).apply {
-            hint = "أدخل رابط الإطار (iframe) هنا..."
+            hint = "أدخل الرابط هنا..."
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
 
-        val openBtn = Button(requireContext()).apply { text = "فتح / استخراج" }
+        openBtn = Button(requireContext()).apply { text = "فتح / استخراج" }
         val backBtn = Button(requireContext()).apply { text = "رجوع" }
 
         controlsLayout.addView(urlInput)
         controlsLayout.addView(openBtn)
         controlsLayout.addView(backBtn)
 
-        // 3. حاوية الـ WebView
         webViewContainer = FrameLayout(requireContext()).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -95,10 +94,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
         dialog.setContentView(root)
 
-        // 4. إعداد الـ WebView الأساسي
         setupAdvancedWebView(mainWebView)
 
-        // 5. الأوامر
         openBtn.setOnClickListener {
             var url = urlInput.text.toString().replace("\\s+".toRegex(), "").trim()
             if (url.isNotEmpty()) {
@@ -108,25 +105,20 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
                 imm.hideSoftInputFromWindow(urlInput.windowToken, 0)
 
-                // تفريغ قائمة الروابط القديمة
                 foundM3u8.clear()
                 Log.d("YoutubeSheet", "Starting new extraction for: $url")
 
-                // 🔴 تمرير الـ Referer وهو مهم جداً
                 val headers = mapOf("Referer" to url)
                 mainWebView.loadUrl(url, headers)
             }
         }
 
         backBtn.setOnClickListener {
-            // إغلاق النوافذ المنبثقة أولاً
             if (popupsList.isNotEmpty()) {
                 val lastPopup = popupsList.removeLast()
                 webViewContainer.removeView(lastPopup)
                 lastPopup.destroy()
-            } 
-            // ثم الرجوع في المتصفح الرئيسي
-            else if (mainWebView.canGoBack()) {
+            } else if (mainWebView.canGoBack()) {
                 mainWebView.goBack()
             }
         }
@@ -149,7 +141,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             allowUniversalAccessFromFileURLs = true
             
             javaScriptCanOpenWindowsAutomatically = true
-            mediaPlaybackRequiresUserGesture = false // للسماح بالتشغيل التلقائي/بالسكربت
+            mediaPlaybackRequiresUserGesture = false 
             
             loadWithOverviewMode = true
             useWideViewPort = true
@@ -163,27 +155,22 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             userAgentString = USER_AGENT
         }
 
-        // تسريع الهاردوير لكي يظهر الفيديو بدلاً من الشاشة السوداء
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
 
-        // --- إعداد WebChromeClient للتعامل مع النوافذ (الإعلانات) وحقن الكونسول ---
         webView.webChromeClient = object : WebChromeClient() {
-            
             override fun onConsoleMessage(cm: ConsoleMessage?): Boolean {
                 val msg = cm?.message() ?: ""
                 try {
-                    // اصطياد الروابط التي تطبعها سكربتاتنا المحقونة في الـ Console
                     if (msg.startsWith("NET_M3U8::") || msg.startsWith("JW_M3U8::")) {
                         val url = msg.substringAfter("::").trim()
                         synchronized(foundM3u8) {
                             if (!foundM3u8.contains(url)) {
                                 foundM3u8.add(url)
                                 Log.d("YoutubeSheet", "🎉 FOUND M3U8: $url")
-                                // هنا يمكنك عرض رسالة Toast للمستخدم أنه تم العثور على رابط
                                 Handler(Looper.getMainLooper()).post {
                                     Toast.makeText(requireContext(), "تم العثور على رابط فيديو!", Toast.LENGTH_SHORT).show()
                                 }
@@ -191,7 +178,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                         }
                     }
                 } catch (_: Exception) {}
-                return super.onConsoleMessage(cm) // السماح بطباعة الرسائل للكونسول العادي
+                return super.onConsoleMessage(cm) 
             }
 
             override fun onCreateWindow(
@@ -200,9 +187,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 isUserGesture: Boolean,
                 resultMsg: android.os.Message?
             ): Boolean {
-                // إنشاء نافذة منبثقة وإضافتها للحاوية لكي لا يتعطل المشغل
                 val newWebView = WebView(requireContext())
-                setupAdvancedWebView(newWebView) // نسخ الإعدادات
+                setupAdvancedWebView(newWebView) 
                 
                 newWebView.layoutParams = FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -227,26 +213,37 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                     it.destroy()
                 }
             }
-            
-            override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
-                super.onShowCustomView(view, callback)
-                view?.let { webViewContainer.addView(it) }
-            }
         }
 
-        // --- إعداد WebViewClient للحقن والتتبع ---
         webView.webViewClient = object : WebViewClient() {
             
+            // 🔴 هذا هو الحل السحري لمشكلة الشاشة السوداء وعدم التحميل!
+            @SuppressLint("WebViewClientOnReceivedSslError")
+            override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
+                handler?.proceed() // تجاهل أخطاء الحماية ومتابعة التحميل بالقوة
+            }
+
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                // تغيير النص ليعرف المستخدم أن الصفحة قيد التحميل
+                activity?.runOnUiThread {
+                    openBtn.text = "جاري التحميل..."
+                }
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 
-                // 🔴 حقن السكربت الخبيث (Sniffer) لسرقة الروابط من الشبكة والمشغل
+                // إعادة النص بعد انتهاء التحميل
+                activity?.runOnUiThread {
+                    openBtn.text = "فتح / استخراج"
+                }
+                
                 val js = """
                 (function() {
                     try {
                         if (!window.__NET_HOOKED__) {
                             window.__NET_HOOKED__ = true;
-                            // 1. اعتراض أوامر fetch
                             const _fetch = window.fetch;
                             if (_fetch) {
                                 window.fetch = function() {
@@ -265,7 +262,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                                     });
                                 };
                             }
-                            // 2. اعتراض طلبات XHR القديمة
                             const _open = XMLHttpRequest.prototype.open;
                             XMLHttpRequest.prototype.open = function(method, u) {
                                 this.addEventListener('load', function() {
@@ -280,23 +276,18 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                                 });
                                 return _open.apply(this, arguments);
                             };
-                            console.log('🌐 Network sniffer installed visually');
                         }
                         
-                        // 3. النقر الإجباري لبدء التشغيل (محاولة إيقاظ المشغل)
                         setTimeout(function(){
                             var sels = ['.jw-display-icon-container','.jw-icon-play','.jw-svg-icon-play','.jw-display','.jwplayer','#player','.player','video'];
                             for (var i=0;i<sels.length;i++){
                                 try {
                                     var el = document.querySelector(sels[i]);
-                                    if (el) { 
-                                        el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); 
-                                    }
+                                    if (el) { el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); }
                                 } catch(e){}
                             }
                         }, 1000);
                         
-                        // 4. محاولة قراءة روابط JWPlayer مباشرة إذا كان موجوداً
                         if (typeof jwplayer === 'function') {
                             try {
                                 var p = jwplayer();
@@ -319,17 +310,23 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 try { view?.evaluateJavascript(js, null) } catch (_: Exception) {}
             }
 
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                val url = request?.url.toString()
+                if (url.startsWith("intent://") || url.startsWith("market://") || url.startsWith("tg://")) {
+                    return true 
+                }
+                return false 
+            }
+
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 val url = request.url.toString()
                 val method = request.method
                 val lowerUrl = url.lowercase()
 
-                // فلترة الروابط الخبيثة لتجنب الكراش
                 if (lowerUrl.startsWith("intent://") || lowerUrl.startsWith("market://") || lowerUrl.startsWith("tg://")) {
-                    return WebResourceResponse("text/plain", "utf-8", null) // إحباط الطلب بصمت
+                    return WebResourceResponse("text/plain", "utf-8", null) 
                 }
 
-                // 🔴 إذا اكتشفنا رابط m3u8 في الشبكة، نحتفظ به ونجعل OkHttp يحمله بالنيابة لضبط الـ Headers
                 if (method.equals("GET", ignoreCase = true) && 
                     lowerUrl.contains(".m3u8") && 
                     lowerUrl.substringBefore("?").endsWith(".m3u8")) 
@@ -342,17 +339,15 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                             }
                         }
 
-                        // توجيه الطلب عبر OkHttp لضمان تخطي الحماية
                         val reqBuilder = Request.Builder().url(url)
                             .header("User-Agent", USER_AGENT)
-                            .header("Referer", view.url ?: "") // تمرير رابط الصفحة الحالية
+                            .header("Referer", view.url ?: "") 
                             
                         cookieManager.getCookie(url)?.let { ck -> reqBuilder.header("Cookie", ck) }
                         
                         val response = httpClient.newCall(reqBuilder.build()).execute()
                         if (!response.isSuccessful) return null
                         
-                        // حفظ الكوكيز المعادة
                         response.headers("Set-Cookie").forEach { cookieManager.setCookie(url, it) }
                         
                         val contentType = response.header("content-type")?.split(";")?.first() ?: "application/vnd.apple.mpegurl"
@@ -361,7 +356,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                         return null
                     }
                 }
-                
                 return super.shouldInterceptRequest(view, request)
             }
         }
