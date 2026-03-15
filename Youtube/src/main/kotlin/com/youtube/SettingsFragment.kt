@@ -83,7 +83,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             }
         }
 
-        webView.loadUrl("https://www.youtube.com")
+        webView.loadUrl("https://web3156x.faselhdx.bid/main")
 
         button.setOnClickListener {
             showLinks()
