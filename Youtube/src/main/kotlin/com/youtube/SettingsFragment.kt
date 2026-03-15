@@ -1,6 +1,7 @@
 package com.youtube
 
 import android.annotation.SuppressLint
+import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -11,32 +12,42 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.*
-import androidx.appcompat.app.AppCompatActivity
+import androidx.fragment.app.DialogFragment
+import androidx.fragment.app.FragmentManager
 
-class MainActivity : AppCompatActivity() {
+class YoutubeSettingsBottomSheet : DialogFragment() {
 
-    val links = mutableListOf<String>()
+    private val links = mutableListOf<String>()
+
+    companion object {
+        fun show(fm: FragmentManager) {
+            YoutubeSettingsBottomSheet().show(fm, "anime_settings")
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+    override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
 
-        val layout = LinearLayout(this)
+        val dialog = Dialog(requireContext())
+
+        val layout = LinearLayout(requireContext())
         layout.orientation = LinearLayout.VERTICAL
 
-        val button = Button(this)
+        val button = Button(requireContext())
         button.text = "عرض الروابط"
 
-        val webView = WebView(this)
+        val webView = WebView(requireContext())
 
-        layout.addView(button,
+        layout.addView(
+            button,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         )
 
-        layout.addView(webView,
+        layout.addView(
+            webView,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 0,
@@ -44,7 +55,7 @@ class MainActivity : AppCompatActivity() {
             )
         )
 
-        setContentView(layout)
+        dialog.setContentView(layout)
 
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -63,7 +74,6 @@ class MainActivity : AppCompatActivity() {
                     url.contains(".m3u8") ||
                     url.contains("videoplayback")
                 ) {
-
                     if (!links.contains(url)) {
                         links.add(url)
                     }
@@ -78,21 +88,23 @@ class MainActivity : AppCompatActivity() {
         button.setOnClickListener {
             showLinks()
         }
+
+        return dialog
     }
 
-    fun showLinks() {
+    private fun showLinks() {
 
-        val dialog = android.app.Dialog(this)
+        val dialog = Dialog(requireContext())
 
-        val scroll = ScrollView(this)
-        val layout = LinearLayout(this)
+        val scroll = ScrollView(requireContext())
+        val layout = LinearLayout(requireContext())
         layout.orientation = LinearLayout.VERTICAL
 
         scroll.addView(layout)
 
         if (links.isEmpty()) {
 
-            val text = TextView(this)
+            val text = TextView(requireContext())
             text.text = "لا توجد روابط"
             text.gravity = Gravity.CENTER
 
@@ -102,26 +114,26 @@ class MainActivity : AppCompatActivity() {
 
             for (link in links) {
 
-                val itemLayout = LinearLayout(this)
+                val itemLayout = LinearLayout(requireContext())
                 itemLayout.orientation = LinearLayout.VERTICAL
 
-                val text = TextView(this)
+                val text = TextView(requireContext())
                 text.text = link
 
-                val copy = Button(this)
+                val copy = Button(requireContext())
                 copy.text = "نسخ الرابط"
 
                 copy.setOnClickListener {
 
                     val clipboard =
-                        getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
 
                     val clip = ClipData.newPlainText("video", link)
 
                     clipboard.setPrimaryClip(clip)
 
                     Toast.makeText(
-                        this,
+                        requireContext(),
                         "تم النسخ",
                         Toast.LENGTH_SHORT
                     ).show()
