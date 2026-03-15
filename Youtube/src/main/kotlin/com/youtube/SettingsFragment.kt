@@ -29,13 +29,14 @@ import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.FragmentManager
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
+import org.json.JSONTokener
 
 class YoutubeSettingsBottomSheet : DialogFragment() {
 
     private lateinit var webViewContainer: FrameLayout
     private lateinit var mainWebView: WebView
     
-    // سجن الإعلانات (تخزين النوافذ الوهمية لتدميرها لاحقاً)
     private val popupsList = mutableListOf<WebView>()
     
     private val httpClient = OkHttpClient.Builder()
@@ -65,6 +66,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             setBackgroundColor(Color.parseColor("#121212"))
         }
 
+        // --- شريط الأدوات العلوي ---
         val buttonsLayout = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(16, 16, 16, 16)
@@ -76,6 +78,16 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             text = "إغلاق"
             setTextColor(Color.RED)
             setBackgroundColor(Color.TRANSPARENT) 
+        }
+
+        // 🔴 الزر الجديد (كاشف الأزرار)
+        val detectBtnsBtn = Button(ctx).apply {
+            text = "كاشف الأزرار"
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#FF9800")) // لون برتقالي مميز
+            val params = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            params.setMargins(10, 0, 10, 0)
+            layoutParams = params
         }
 
         val urlInput = EditText(ctx).apply {
@@ -95,7 +107,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         val backBtn = Button(ctx).apply { 
             text = "رجوع"
             setBackgroundColor(Color.parseColor("#555555"))
-            setTextColor(Color.WHITE) 
+            setTextColor(Color.WHITE)
         }
 
         val copyBtn = Button(ctx).apply {
@@ -105,7 +117,9 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             visibility = View.GONE
         }
 
+        // ترتيب الأزرار (إغلاق ثم كاشف الأزرار ثم الباقي)
         buttonsLayout.addView(closeBtn)
+        buttonsLayout.addView(detectBtnsBtn)
         buttonsLayout.addView(urlInput)
         buttonsLayout.addView(playBtn)
         buttonsLayout.addView(backBtn)
@@ -124,13 +138,13 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
         setupFaselWebView(mainWebView, copyBtn, isMainPlayer = true)
 
+        // --- برمجة الأزرار ---
         closeBtn.setOnClickListener { dismiss() }
 
         playBtn.setOnClickListener {
             var url = urlInput.text.toString().replace("\\s+".toRegex(), "").trim()
             if (url.isNotEmpty()) {
                 if (!url.startsWith("http")) url = "https://$url"
-                
                 currentIframeUrl = url
                 extractedVideoUrl = null
                 copyBtn.visibility = View.GONE
@@ -159,12 +173,95 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 val clip = ClipData.newPlainText("Video Link", link)
                 clipboard.setPrimaryClip(clip)
                 Toast.makeText(requireContext(), "تم نسخ الرابط!", Toast.LENGTH_SHORT).show()
-                
-                AlertDialog.Builder(requireContext())
-                    .setTitle("الرابط النقي")
-                    .setMessage(link)
-                    .setPositiveButton("موافق", null)
-                    .show()
+                AlertDialog.Builder(requireContext()).setTitle("الرابط النقي").setMessage(link).setPositiveButton("موافق", null).show()
+            }
+        }
+
+        // 🔴 برمجة كاشف الأزرار
+        detectBtnsBtn.setOnClickListener {
+            // سكربت يبحث عن كل العناصر القابلة للضغط ويسجلها
+            val extractionJs = """
+            (function() {
+                var els = document.querySelectorAll('button, a, [onclick], [role="button"], input[type="button"], video, .plyr__control, .vjs-button, .jw-icon');
+                var result = [];
+                var count = 0;
+                for(var i=0; i<els.length; i++) {
+                    var el = els[i];
+                    
+                    // تجاهل العناصر المخفية تماماً
+                    var rect = el.getBoundingClientRect();
+                    if(rect.width === 0 || rect.height === 0) continue;
+
+                    // إعطاء العنصر ID مخصص لكي نضغط عليه لاحقاً
+                    el.setAttribute('data-yt-bot-id', count);
+                    
+                    // محاولة استخراج اسم أو وصف للعنصر
+                    var text = el.innerText ? el.innerText.trim().substring(0, 30) : '';
+                    var id = el.id ? '#' + el.id : '';
+                    var cls = typeof el.className === 'string' ? '.' + el.className.split(' ').join('.') : '';
+                    
+                    var name = text;
+                    if(!name) name = id;
+                    if(!name) name = cls;
+                    if(!name) name = "بدون اسم";
+
+                    result.push({
+                        yt_id: count,
+                        tag: el.tagName,
+                        name: name.replace(/\n/g, ' ')
+                    });
+                    count++;
+                }
+                return JSON.stringify(result);
+            })();
+            """.trimIndent()
+
+            mainWebView.evaluateJavascript(extractionJs) { jsonString ->
+                if (jsonString == null || jsonString == "null") {
+                    Toast.makeText(ctx, "لم يتم العثور على أزرار", Toast.LENGTH_SHORT).show()
+                    return@evaluateJavascript
+                }
+
+                try {
+                    // تنظيف النص العائد من الجافاسكربت
+                    val cleanJson = JSONTokener(jsonString).nextValue() as String
+                    val jsonArray = JSONArray(cleanJson)
+
+                    val displayList = mutableListOf<String>()
+                    val idList = mutableListOf<Int>()
+
+                    for (i in 0 until jsonArray.length()) {
+                        val obj = jsonArray.getJSONObject(i)
+                        val ytId = obj.getInt("yt_id")
+                        val tag = obj.getString("tag")
+                        val name = obj.getString("name")
+
+                        displayList.add("زر $ytId: [$tag] $name")
+                        idList.add(ytId)
+                    }
+
+                    if (displayList.isEmpty()) {
+                        Toast.makeText(ctx, "لا توجد أزرار ظاهرة قابلة للضغط", Toast.LENGTH_SHORT).show()
+                        return@evaluateJavascript
+                    }
+
+                    // عرض قائمة الأزرار للمستخدم
+                    AlertDialog.Builder(ctx)
+                        .setTitle("كاشف الأزرار (اضغط للتشغيل)")
+                        .setItems(displayList.toTypedArray()) { _, which ->
+                            val selectedId = idList[which]
+                            // سكربت للضغط على الزر الذي اختاره المستخدم
+                            val clickJs = "document.querySelector('[data-yt-bot-id=\"${selectedId}\"]').click();"
+                            mainWebView.evaluateJavascript(clickJs, null)
+                            Toast.makeText(ctx, "تم إرسال نقرة للزر $selectedId", Toast.LENGTH_SHORT).show()
+                        }
+                        .setNegativeButton("إلغاء", null)
+                        .show()
+
+                } catch (e: Exception) {
+                    Log.e("YoutubeSheet", "Error parsing buttons", e)
+                    Toast.makeText(ctx, "حدث خطأ أثناء قراءة الأزرار", Toast.LENGTH_SHORT).show()
+                }
             }
         }
 
@@ -191,7 +288,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         settings.allowFileAccess = true
         settings.allowFileAccessFromFileURLs = true
         settings.allowUniversalAccessFromFileURLs = true
-        // 🔴 السماح بتشغيل الميديا دون تدخل المستخدم
         settings.mediaPlaybackRequiresUserGesture = false 
         
         settings.javaScriptCanOpenWindowsAutomatically = true
@@ -237,7 +333,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                     val newWebView = WebView(requireContext())
                     setupFaselWebView(newWebView, copyBtn, isMainPlayer = false) 
 
-                    // 🔴 سجن الإعلانات: نجعل حجم نافذة الإعلان 1x1 بكسل فقط لكي لا تظهر لك!
                     newWebView.layoutParams = FrameLayout.LayoutParams(1, 1)
                     
                     webViewContainer.addView(newWebView)
@@ -263,14 +358,12 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 
-                // 🔴 حقن كود فاصل بالكامل (الضغط العنيف واستخراج الشبكة)
                 if (isMainPlayer) {
                     val js = """
                     (function() {
                         try {
                             if (!window.__NET_HOOKED__) {
                                 window.__NET_HOOKED__ = true;
-                                // hook fetch
                                 const _fetch = window.fetch;
                                 if (_fetch) {
                                     window.fetch = function() {
@@ -283,7 +376,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                                         });
                                     };
                                 }
-                                // hook XHR
                                 const _open = XMLHttpRequest.prototype.open;
                                 XMLHttpRequest.prototype.open = function(method, u) {
                                     this.addEventListener('load', function() {
@@ -295,47 +387,24 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                                 };
                             }
 
-                            // دالة فاصل للضغط على المشغلات المختلفة (تعمل كل ثانية)
+                            // النقر التلقائي العنيف (تُرك كما هو لمساعدة المشغلات)
                             setInterval(function() {
-                                // 1. JWPlayer API
                                 try {
                                     if (typeof jwplayer === 'function') {
                                         var p = jwplayer();
                                         if (p && typeof p.play === 'function' && p.getState() !== 'playing') {
-                                            // أزلنا setMute لكي تستمتع بالصوت لأننا فعلنا الخيار برمجياً
                                             p.play(); 
-                                            console.log('JW_API_PLAY');
                                         }
                                     }
                                 } catch(e){}
                                 
-                                // 2. الضغط على عناصر التشغيل المرئية
                                 var sels = ['.jw-display-icon-container','.jw-icon-play','.jw-svg-icon-play','.jw-display','.jwplayer','#player','.player','video','.vjs-big-play-button'];
                                 for (var i=0; i<sels.length; i++){
                                     try {
                                         var el = document.querySelector(sels[i]);
-                                        if (el) { 
-                                            el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); 
-                                        }
+                                        if (el) { el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); }
                                     } catch(e){}
                                 }
-                                
-                                // 3. استخراج قائمة التشغيل (Playlist) لـ JWPlayer إن وجدت
-                                try {
-                                    if (typeof jwplayer === 'function') {
-                                        var p2 = jwplayer();
-                                        if (p2 && typeof p2.getPlaylist === 'function') {
-                                            var pl = p2.getPlaylist();
-                                            if (pl && pl.length>0 && pl[0].sources) {
-                                                pl[0].sources.forEach(function(s){
-                                                    if (s && s.file && s.file.indexOf('.m3u8') !== -1) {
-                                                        console.log('JW_M3U8::' + s.file);
-                                                    }
-                                                });
-                                            }
-                                        }
-                                    }
-                                } catch(e){}
                             }, 1000);
 
                         } catch(err){}
@@ -348,7 +417,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url.toString()
 
-                // 🔴 تجميد الصفحة: إذا كان هذا هو المشغل الرئيسي، نمنع الإعلانات من نقله لصفحة أخرى
                 if (isMainPlayer && currentIframeUrl.isNotEmpty() && url != currentIframeUrl) {
                     return true 
                 }
@@ -369,7 +437,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                     return super.shouldInterceptRequest(view, request)
                 }
 
-                // اصطياد m3u8 وإرساله عبر OkHttp (كما في فاصل)
                 if (method.equals("GET", ignoreCase = true) &&
                     (lower.contains(".m3u8") || lower.contains(".mp4")) &&
                     !lower.endsWith(".js")
