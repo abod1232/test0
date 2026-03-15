@@ -43,11 +43,15 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         val linksBtn = Button(requireContext())
         linksBtn.text = "عرض الروابط"
 
-        topBar.addView(backBtn,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT,1f))
+        topBar.addView(
+            backBtn,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
 
-        topBar.addView(linksBtn,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT,1f))
+        topBar.addView(
+            linksBtn,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
 
         webView = WebView(requireContext())
 
@@ -65,8 +69,21 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
+        webView.settings.allowFileAccess = true
+        webView.settings.loadsImagesAutomatically = true
+        webView.settings.setSupportMultipleWindows(false)
 
         webView.webViewClient = object : WebViewClient() {
+
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): Boolean {
+
+                val url = request?.url.toString()
+                view?.loadUrl(url)
+                return true
+            }
 
             override fun shouldInterceptRequest(
                 view: WebView?,
@@ -75,9 +92,10 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
                 val url = request?.url.toString()
 
-                if (url.contains(".mp4") ||
+                if (
+                    url.contains(".mp4") ||
                     url.contains(".m3u8") ||
-                    url.contains("videoplayback")
+                    url.contains(".mkv")
                 ) {
 
                     if (!links.contains(url)) {
@@ -89,11 +107,14 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             }
         }
 
-        webView.loadUrl("https://web3156x.faselhdx.bid/main")
+        webView.loadUrl("https://web3156x.faselhdx.bid/")
 
         backBtn.setOnClickListener {
+
             if (webView.canGoBack()) {
                 webView.goBack()
+            } else {
+                dismiss()
             }
         }
 
@@ -117,7 +138,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         if (links.isEmpty()) {
 
             val text = TextView(requireContext())
-            text.text = "لا توجد روابط"
+            text.text = "لا توجد روابط فيديو"
             text.gravity = Gravity.CENTER
 
             layout.addView(text)
@@ -129,13 +150,13 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 val text = TextView(requireContext())
                 text.text = link
 
-                val copy = Button(requireContext())
-                copy.text = "نسخ الرابط"
+                val copyBtn = Button(requireContext())
+                copyBtn.text = "نسخ الرابط"
 
-                copy.setOnClickListener {
+                copyBtn.setOnClickListener {
 
-                    val clipboard =
-                        requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clipboard = requireContext()
+                        .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
 
                     val clip = ClipData.newPlainText("video", link)
 
@@ -143,13 +164,13 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
                     Toast.makeText(
                         requireContext(),
-                        "تم النسخ",
+                        "تم نسخ الرابط",
                         Toast.LENGTH_SHORT
                     ).show()
                 }
 
                 layout.addView(text)
-                layout.addView(copy)
+                layout.addView(copyBtn)
             }
         }
 
