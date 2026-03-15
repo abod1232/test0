@@ -5,12 +5,12 @@ import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.webkit.*
 import android.widget.*
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.FragmentManager
@@ -67,11 +67,14 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
         dialog.setContentView(root)
 
-        webView.settings.javaScriptEnabled = true
-        webView.settings.domStorageEnabled = true
-        webView.settings.allowFileAccess = true
-        webView.settings.loadsImagesAutomatically = true
-        webView.settings.setSupportMultipleWindows(false)
+        val settings = webView.settings
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.databaseEnabled = true
+        settings.allowFileAccess = true
+        settings.loadsImagesAutomatically = true
+        settings.cacheMode = WebSettings.LOAD_DEFAULT
+        settings.setSupportMultipleWindows(false)
 
         webView.webViewClient = object : WebViewClient() {
 
@@ -81,14 +84,23 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             ): Boolean {
 
                 val url = request?.url.toString()
-                view?.loadUrl(url)
+
+                if (url.startsWith("http") || url.startsWith("https")) {
+                    view?.loadUrl(url)
+                } else {
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    } catch (_: Exception) {
+                    }
+                }
+
                 return true
             }
 
             override fun shouldInterceptRequest(
                 view: WebView?,
                 request: WebResourceRequest?
-            ): android.webkit.WebResourceResponse? {
+            ): WebResourceResponse? {
 
                 val url = request?.url.toString()
 
@@ -97,7 +109,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                     url.contains(".m3u8") ||
                     url.contains(".mkv")
                 ) {
-
                     if (!links.contains(url)) {
                         links.add(url)
                     }
@@ -111,11 +122,12 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
         backBtn.setOnClickListener {
 
-            if (webView.canGoBack()) {
+            if (webView.copyBackForwardList().currentIndex > 0) {
                 webView.goBack()
             } else {
                 dismiss()
             }
+
         }
 
         linksBtn.setOnClickListener {
