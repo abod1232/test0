@@ -18,6 +18,7 @@ import androidx.fragment.app.FragmentManager
 class YoutubeSettingsBottomSheet : DialogFragment() {
 
     private val links = mutableListOf<String>()
+    private lateinit var webView: WebView
 
     companion object {
         fun show(fm: FragmentManager) {
@@ -33,24 +34,30 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         val root = LinearLayout(requireContext())
         root.orientation = LinearLayout.VERTICAL
 
-        val showLinksBtn = Button(requireContext())
-        showLinksBtn.text = "عرض الروابط"
+        val topBar = LinearLayout(requireContext())
+        topBar.orientation = LinearLayout.HORIZONTAL
 
-        val webView = WebView(requireContext())
+        val backBtn = Button(requireContext())
+        backBtn.text = "رجوع"
 
-        root.addView(
-            showLinksBtn,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
+        val linksBtn = Button(requireContext())
+        linksBtn.text = "عرض الروابط"
+
+        topBar.addView(backBtn,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT,1f))
+
+        topBar.addView(linksBtn,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT,1f))
+
+        webView = WebView(requireContext())
+
+        root.addView(topBar)
 
         root.addView(
             webView,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                1200   // ارتفاع ثابت حتى يظهر
+                1200
             )
         )
 
@@ -72,6 +79,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                     url.contains(".m3u8") ||
                     url.contains("videoplayback")
                 ) {
+
                     if (!links.contains(url)) {
                         links.add(url)
                     }
@@ -81,9 +89,15 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             }
         }
 
-        webView.loadUrl("https://web3156x.faselhdx.bid/")
+        webView.loadUrl("https://web3156x.faselhdx.bid/main")
 
-        showLinksBtn.setOnClickListener {
+        backBtn.setOnClickListener {
+            if (webView.canGoBack()) {
+                webView.goBack()
+            }
+        }
+
+        linksBtn.setOnClickListener {
             showLinks()
         }
 
@@ -120,8 +134,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
                 copy.setOnClickListener {
 
-                    val clipboard = requireContext()
-                        .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clipboard =
+                        requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
 
                     val clip = ClipData.newPlainText("video", link)
 
