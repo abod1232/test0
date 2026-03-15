@@ -2,10 +2,12 @@ package com.youtube
 
 import android.annotation.SuppressLint
 import android.app.Dialog
+import android.content.Context
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.InputMethodManager
 import android.webkit.*
 import android.widget.*
 import androidx.fragment.app.DialogFragment
@@ -15,6 +17,9 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
     private lateinit var webViewContainer: FrameLayout
     private lateinit var mainWebView: WebView
+    
+    // 🔴 قائمة لتتبع النوافذ المنبثقة (الإعلانات) لإغلاقها عند الضغط على رجوع
+    private val popupsList = mutableListOf<WebView>()
 
     companion object {
         fun show(fm: FragmentManager) {
@@ -26,7 +31,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         val dialog = Dialog(requireContext())
 
-        // 1. الواجهة الرئيسية
         val root = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = ViewGroup.LayoutParams(
@@ -35,7 +39,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             )
         }
 
-        // 2. شريط الإدخال والأزرار
         val controlsLayout = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(10, 10, 10, 10)
@@ -53,11 +56,12 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         controlsLayout.addView(openBtn)
         controlsLayout.addView(backBtn)
 
-        // 3. حاوية الـ WebView (مهمة جداً للتعامل مع النوافذ المنبثقة والإعلانات)
+        // 🔴 الحل السحري لمشكلة الشاشة السوداء وعدم التحميل (استخدام weight)
         webViewContainer = FrameLayout(requireContext()).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT // أخذ باقي الشاشة بدلاً من رقم ثابت
+                0, // الارتفاع 0
+                1f // نجعله يأخذ باقي مساحة الشاشة بالكامل
             )
         }
 
@@ -69,23 +73,32 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
         dialog.setContentView(root)
 
-        // 4. إعداد الـ WebView
         setupWebView(mainWebView)
 
-        // 5. الأوامر
         openBtn.setOnClickListener {
-            var url = urlInput.text.toString().trim()
+            // تنظيف الرابط من المسافات المخفية
+            var url = urlInput.text.toString().replace("\\s+".toRegex(), "").trim()
             if (url.isNotEmpty()) {
                 if (!url.startsWith("http")) url = "https://$url"
                 
-                // 🔴 مهم جداً للمشغلات: تمرير الـ Referer
+                // إخفاء الكيبورد فوراً بعد الضغط
+                val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.hideSoftInputFromWindow(urlInput.windowToken, 0)
+
                 val headers = mapOf("Referer" to url)
                 mainWebView.loadUrl(url, headers)
             }
         }
 
         backBtn.setOnClickListener {
-            if (mainWebView.canGoBack()) {
+            // 🔴 حل مشكلة الإعلانات: إذا كان هناك إعلان مفتوح، نغلقه أولاً
+            if (popupsList.isNotEmpty()) {
+                val lastPopup = popupsList.removeLast()
+                webViewContainer.removeView(lastPopup)
+                lastPopup.destroy()
+            } 
+            // إذا لم يكن هناك إعلانات، نعود للصفحة السابقة في المتصفح الرئيسي
+            else if (mainWebView.canGoBack()) {
                 mainWebView.goBack()
             }
         }
@@ -97,23 +110,17 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     private fun setupWebView(webView: WebView) {
         val settings = webView.settings
 
-        // إعدادات الجافاسكربت والتخزين
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.databaseEnabled = true
 
-        // إعدادات الفيديو والتشغيل
-        settings.mediaPlaybackRequiresUserGesture = false // السماح بالتشغيل التلقائي
+        settings.mediaPlaybackRequiresUserGesture = false // تشغيل الفيديو تلقائياً
         settings.allowFileAccess = true
         settings.allowContentAccess = true
-        settings.allowFileAccessFromFileURLs = true
-        settings.allowUniversalAccessFromFileURLs = true
 
-        // إعدادات النوافذ
         settings.javaScriptCanOpenWindowsAutomatically = true
         settings.setSupportMultipleWindows(true)
         
-        // إعدادات العرض
         settings.loadWithOverviewMode = true
         settings.useWideViewPort = true
         settings.builtInZoomControls = true
@@ -121,9 +128,9 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         settings.cacheMode = WebSettings.LOAD_DEFAULT
 
-        settings.userAgentString = "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 Chrome/120.0 Safari/537.36"
+        settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-        // 🔴 تفعيل تسريع الأجهزة (ضروري جداً لرندرة الفيديو HTML5)
+        // تسريع الهاردوير لرسم مشغلات الفيديو (يمنع الشاشة السوداء)
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
         val cookieManager = CookieManager.getInstance()
@@ -131,8 +138,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         cookieManager.setAcceptThirdPartyCookies(webView, true)
 
         webView.webChromeClient = object : WebChromeClient() {
-            
-            // 🔴 حل مشكلة تعليق المشغل بسبب النوافذ المنبثقة (الإعلانات)
             override fun onCreateWindow(
                 view: WebView?,
                 isDialog: Boolean,
@@ -140,14 +145,17 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 resultMsg: android.os.Message?
             ): Boolean {
                 val newWebView = WebView(requireContext())
-                setupWebView(newWebView) // نسخ نفس الإعدادات
+                setupWebView(newWebView) 
 
-                // يجب إضافة النافذة الجديدة للحاوية لكي يتم إنشاؤها فعلياً وتستكمل سكربتات المشغل عملها
                 newWebView.layoutParams = FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
                 )
+                
+                // إضافة الإعلان/النافذة الجديدة للشاشة
                 webViewContainer.addView(newWebView)
+                // حفظها في القائمة لكي نتمكن من إغلاقها بزر الرجوع
+                popupsList.add(newWebView)
 
                 val transport = resultMsg?.obj as WebView.WebViewTransport
                 transport.webView = newWebView
@@ -156,29 +164,24 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 return true
             }
 
-            // لدعم ملء الشاشة (Fullscreen) إذا تم الضغط عليه داخل المشغل
-            override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
-                super.onShowCustomView(view, callback)
-                view?.let { webViewContainer.addView(it) }
+            override fun onCloseWindow(window: WebView?) {
+                super.onCloseWindow(window)
+                window?.let {
+                    webViewContainer.removeView(it)
+                    popupsList.remove(it)
+                    it.destroy()
+                }
             }
         }
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url.toString()
-                
-                // 🔴 فلترة الروابط الخبيثة التي تسبب كراش للويبفيو (مثل intent:// و market://)
+                // حظر الروابط التي تفتح تطبيقات خارجية وتسبب كراش
                 if (url.startsWith("intent://") || url.startsWith("market://") || url.startsWith("tg://")) {
-                    return true // إيقاف التحميل
+                    return true 
                 }
-                
-                // السماح للويبفيو بالتعامل مع الروابط العادية (http/https) بنفسه (return false أفضل من view.loadUrl)
-                return false 
-            }
-            
-            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                super.onPageStarted(view, url, favicon)
-                // يمكن إضافة ProgressBar هنا مستقبلاً
+                return false // جعل الويبفيو يحمل الرابط بنفسه
             }
         }
     }
