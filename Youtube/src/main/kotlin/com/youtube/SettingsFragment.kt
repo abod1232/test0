@@ -5,7 +5,6 @@ import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
@@ -20,17 +19,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     private lateinit var webView: WebView
 
     companion object {
-
-        fun show(fm: FragmentManager, url: String) {
-
-            val sheet = YoutubeSettingsBottomSheet()
-
-            val args = Bundle()
-            args.putString("url", url)
-
-            sheet.arguments = args
-
-            sheet.show(fm, "anime_settings")
+        fun show(fm: FragmentManager) {
+            YoutubeSettingsBottomSheet().show(fm, "anime_settings")
         }
     }
 
@@ -42,8 +32,13 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         val root = LinearLayout(requireContext())
         root.orientation = LinearLayout.VERTICAL
 
-        val topBar = LinearLayout(requireContext())
-        topBar.orientation = LinearLayout.HORIZONTAL
+        // ===== Top controls =====
+
+        val urlInput = EditText(requireContext())
+        urlInput.hint = "ادخل رابط الموقع"
+
+        val openBtn = Button(requireContext())
+        openBtn.text = "فتح الرابط"
 
         val backBtn = Button(requireContext())
         backBtn.text = "رجوع"
@@ -51,19 +46,19 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         val linksBtn = Button(requireContext())
         linksBtn.text = "عرض الروابط"
 
-        topBar.addView(
-            backBtn,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        )
+        val controls = LinearLayout(requireContext())
+        controls.orientation = LinearLayout.VERTICAL
 
-        topBar.addView(
-            linksBtn,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        )
+        controls.addView(urlInput)
+        controls.addView(openBtn)
+        controls.addView(backBtn)
+        controls.addView(linksBtn)
+
+        // ===== WebView =====
 
         webView = WebView(requireContext())
 
-        root.addView(topBar)
+        root.addView(controls)
 
         root.addView(
             webView,
@@ -77,18 +72,29 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
         setupWebView()
 
-        val url = arguments?.getString("url") ?: "https://google.com"
+        // ===== فتح الرابط =====
 
-        webView.loadUrl(url)
+        openBtn.setOnClickListener {
+
+            var url = urlInput.text.toString()
+
+            if (!url.startsWith("http")) {
+                url = "https://$url"
+            }
+
+            webView.loadUrl(url)
+        }
+
+        // ===== زر الرجوع =====
 
         backBtn.setOnClickListener {
 
             if (webView.canGoBack()) {
                 webView.goBack()
-            } else {
-                dismiss()
             }
         }
+
+        // ===== عرض الروابط =====
 
         linksBtn.setOnClickListener {
             showLinks()
@@ -97,68 +103,47 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         return dialog
     }
 
+    // ===== إعداد WebView بصلاحيات كاملة =====
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
 
         val settings = webView.settings
 
-        settings.apply {
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.databaseEnabled = true
 
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            databaseEnabled = true
+        settings.allowFileAccess = true
+        settings.allowContentAccess = true
 
-            allowFileAccess = true
-            allowContentAccess = true
+        settings.allowFileAccessFromFileURLs = true
+        settings.allowUniversalAccessFromFileURLs = true
 
-            allowFileAccessFromFileURLs = true
-            allowUniversalAccessFromFileURLs = true
+        settings.javaScriptCanOpenWindowsAutomatically = true
 
-            javaScriptCanOpenWindowsAutomatically = true
+        settings.mediaPlaybackRequiresUserGesture = false
 
-            mediaPlaybackRequiresUserGesture = false
+        settings.loadWithOverviewMode = true
+        settings.useWideViewPort = true
 
-            loadWithOverviewMode = true
-            useWideViewPort = true
+        settings.builtInZoomControls = true
+        settings.displayZoomControls = false
 
-            builtInZoomControls = true
-            displayZoomControls = false
+        settings.setSupportMultipleWindows(true)
 
-            setSupportMultipleWindows(true)
+        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
 
-            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        settings.cacheMode = WebSettings.LOAD_DEFAULT
 
-            cacheMode = WebSettings.LOAD_DEFAULT
-
-            userAgentString =
-                "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36"
-        }
+        settings.userAgentString =
+            "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36"
 
         val cookieManager = CookieManager.getInstance()
-
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
 
-        webView.webChromeClient = object : WebChromeClient() {
-
-            override fun onCreateWindow(
-                view: WebView?,
-                isDialog: Boolean,
-                isUserGesture: Boolean,
-                resultMsg: android.os.Message?
-            ): Boolean {
-
-                val newWebView = WebView(requireContext())
-
-                setupChildWebView(newWebView)
-
-                val transport = resultMsg?.obj as WebView.WebViewTransport
-                transport.webView = newWebView
-                resultMsg.sendToTarget()
-
-                return true
-            }
-        }
+        webView.webChromeClient = object : WebChromeClient() {}
 
         webView.webViewClient = object : WebViewClient() {
 
@@ -167,16 +152,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 request: WebResourceRequest?
             ): Boolean {
 
-                val url = request?.url.toString()
-
-                if (url.startsWith("http")) {
-                    view?.loadUrl(url)
-                } else {
-                    try {
-                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                    } catch (_: Exception) {}
-                }
-
+                view?.loadUrl(request?.url.toString())
                 return true
             }
 
@@ -197,7 +173,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                         links.add(url)
                     }
 
-                    android.util.Log.d("VIDEO_LINK", url)
                 }
 
                 return super.shouldInterceptRequest(view, request)
@@ -205,19 +180,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         }
     }
 
-    private fun setupChildWebView(child: WebView) {
-
-        val settings = child.settings
-
-        settings.javaScriptEnabled = true
-        settings.domStorageEnabled = true
-        settings.mediaPlaybackRequiresUserGesture = false
-        settings.setSupportMultipleWindows(true)
-        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-
-        child.webViewClient = webView.webViewClient
-        child.webChromeClient = webView.webChromeClient
-    }
+    // ===== عرض الروابط =====
 
     private fun showLinks() {
 
