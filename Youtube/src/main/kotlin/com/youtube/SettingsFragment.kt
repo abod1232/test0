@@ -137,7 +137,22 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 
                 // تنظيف الكوكيز والذاكرة قبل الفتح الجديد
                 mainWebView.clearHistory()
-                mainWebView.loadUrl(url)
+                val headers = mapOf(
+    "Connection" to "keep-alive",
+    "sec-ch-ua" to "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+    "sec-ch-ua-mobile" to "?1",
+    "sec-ch-ua-platform" to "\"Android\"",
+    "Upgrade-Insecure-Requests" to "1",
+    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36",
+    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "Sec-Fetch-Site" to "none",
+    "Sec-Fetch-Mode" to "navigate",
+    "Sec-Fetch-Dest" to "document",
+    "Accept-Encoding" to "gzip, deflate, br, zstd",
+    "Accept-Language" to "ar-EG,ar;q=0.9"
+)
+
+mainWebView.loadUrl(url, headers)
             }
         }
 
