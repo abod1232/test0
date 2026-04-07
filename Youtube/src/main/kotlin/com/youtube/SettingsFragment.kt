@@ -19,7 +19,7 @@ import androidx.fragment.app.FragmentManager
 
 class YoutubeSettingsBottomSheet : DialogFragment() {
 
-    private lateinit var mainWebView: WebView
+    private lateinit var webView: WebView
 
     companion object {
         fun show(fm: FragmentManager) {
@@ -31,12 +31,12 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val ctx = requireContext()
 
-        val rootLayout = LinearLayout(ctx).apply {
+        val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#121212"))
         }
 
-        // شريط الأدوات
+        // الشريط العلوي
         val topBar = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(10, 10, 10, 10)
@@ -45,7 +45,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         }
 
         val urlInput = EditText(ctx).apply {
-            hint = "أدخل الرابط هنا..."
+            hint = "أدخل الرابط..."
             setHintTextColor(Color.GRAY)
             setTextColor(Color.WHITE)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -62,50 +62,42 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         topBar.addView(openBtn)
 
         // WebView
-        mainWebView = WebView(ctx).apply {
+        webView = WebView(ctx).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         }
 
-        val webContainer = FrameLayout(ctx).apply {
+        val containerView = FrameLayout(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 1f
             )
             setBackgroundColor(Color.BLACK)
-            addView(mainWebView)
+            addView(webView)
         }
 
-        rootLayout.addView(topBar)
-        rootLayout.addView(webContainer)
+        root.addView(topBar)
+        root.addView(containerView)
 
-        setupWebView(mainWebView)
+        setupWebView()
 
-        // زر فتح الرابط
+        // زر فتح
         openBtn.setOnClickListener {
             val input = urlInput.text.toString().trim()
             if (input.isNotEmpty()) {
                 val url = if (input.startsWith("http")) input else "https://$input"
-
-                val headers = mapOf(
-                    "Connection" to "keep-alive",
-                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36",
-                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                    "Accept-Language" to "ar-EG,ar;q=0.9"
-                )
-
-                mainWebView.loadUrl(url, headers)
+                webView.loadUrl(url) // بدون أي هيدر
             }
         }
 
-        return rootLayout
+        return root
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun setupWebView(webView: WebView) {
+    private fun setupWebView() {
         val s = webView.settings
         s.javaScriptEnabled = true
         s.domStorageEnabled = true
@@ -115,17 +107,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         s.displayZoomControls = false
         s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
 
-        webView.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
-                url?.let {
-                    val headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36"
-                    )
-                    view?.loadUrl(it, headers)
-                }
-                return true
-            }
-        }
+        webView.webViewClient = WebViewClient() // متصفح طبيعي بدون تعديل
     }
 
     override fun onStart() {
