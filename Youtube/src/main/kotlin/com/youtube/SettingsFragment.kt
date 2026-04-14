@@ -20,7 +20,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
     companion object {
         fun show(fm: FragmentManager) {
-            YoutubeSettingsBottomSheet().show(fm, "pro_browser")
+            YoutubeSettingsBottomSheet().show(fm, "desktop_browser")
         }
     }
 
@@ -105,9 +105,10 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         s.mediaPlaybackRequiresUserGesture = false
         s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
 
-        // ✅ هنا التعديل فقط
+        // 🔥 Desktop UA
         s.userAgentString = USER_AGENT
 
+        // 🔥 كوكيز
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
@@ -117,15 +118,43 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         webView.webViewClient = object : WebViewClient() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
+
+                // 🔥 Spoof كامل
                 view?.evaluateJavascript(
                     """
+                    // إزالة webdriver
                     Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+
+                    // نظام ويندوز
                     Object.defineProperty(navigator, 'platform', {get: () => 'Win32'});
-                    Object.defineProperty(navigator, 'languages', {get: () => ['ar-EG','ar']});
+
+                    // لغات
+                    Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});
+
+                    // بدون لمس
+                    Object.defineProperty(navigator, 'maxTouchPoints', {get: () => 0});
+
+                    // Plugins مزيفة
                     Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+
+                    // Chrome object
                     window.chrome = { runtime: {} };
+
+                    // Hardware
                     Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
                     Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
+
+                    // Screen spoof
+                    Object.defineProperty(screen, 'width', {get: () => 1920});
+                    Object.defineProperty(screen, 'height', {get: () => 1080});
+
+                    // Canvas spoof
+                    const getContext = HTMLCanvasElement.prototype.getContext;
+                    HTMLCanvasElement.prototype.getContext = function() {
+                        const ctx = getContext.apply(this, arguments);
+                        return ctx;
+                    };
+
                     """.trimIndent(),
                     null
                 )
@@ -137,34 +166,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             }
         }
 
-        webView.webChromeClient = object : WebChromeClient() {
-            override fun onCreateWindow(
-                view: WebView?,
-                isDialog: Boolean,
-                isUserGesture: Boolean,
-                resultMsg: android.os.Message?
-            ): Boolean {
-
-                val newWebView = WebView(requireContext())
-                setupChildWebView(newWebView)
-
-                val transport = resultMsg?.obj as WebView.WebViewTransport
-                transport.webView = newWebView
-                resultMsg.sendToTarget()
-
-                return true
-            }
-        }
-    }
-
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun setupChildWebView(child: WebView) {
-        val s = child.settings
-        s.javaScriptEnabled = true
-        s.domStorageEnabled = true
-        s.userAgentString = USER_AGENT
-
-        child.webViewClient = WebViewClient()
+        webView.webChromeClient = WebChromeClient()
     }
 
     override fun onStart() {
