@@ -24,6 +24,9 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         }
     }
 
+    private val USER_AGENT =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreateView(inflater: android.view.LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val ctx = requireContext()
@@ -89,7 +92,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
         val s = webView.settings
 
-        // 🔥 إعدادات قوية
         s.javaScriptEnabled = true
         s.domStorageEnabled = true
         s.databaseEnabled = true
@@ -103,11 +105,9 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         s.mediaPlaybackRequiresUserGesture = false
         s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
 
-        // 🔥 User-Agent حقيقي (بدون wv)
-        s.userAgentString =
-            "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        // ✅ هنا التعديل فقط
+        s.userAgentString = USER_AGENT
 
-        // 🔥 كوكيز (مهم جدًا)
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
@@ -117,24 +117,15 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         webView.webViewClient = object : WebViewClient() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
-
-                // 🔥 إخفاء البصمة (الأهم)
                 view?.evaluateJavascript(
                     """
                     Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                    
-                    Object.defineProperty(navigator, 'platform', {get: () => 'Android'});
-                    
+                    Object.defineProperty(navigator, 'platform', {get: () => 'Win32'});
                     Object.defineProperty(navigator, 'languages', {get: () => ['ar-EG','ar']});
-                    
                     Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
-                    
                     window.chrome = { runtime: {} };
-                    
                     Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
-                    
                     Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
-                    
                     """.trimIndent(),
                     null
                 )
@@ -147,8 +138,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         }
 
         webView.webChromeClient = object : WebChromeClient() {
-
-            // دعم النوافذ (popups)
             override fun onCreateWindow(
                 view: WebView?,
                 isDialog: Boolean,
@@ -168,14 +157,12 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         }
     }
 
-    // WebView للنوافذ الجديدة
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupChildWebView(child: WebView) {
         val s = child.settings
         s.javaScriptEnabled = true
         s.domStorageEnabled = true
-        s.userAgentString =
-            "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        s.userAgentString = USER_AGENT
 
         child.webViewClient = WebViewClient()
     }
