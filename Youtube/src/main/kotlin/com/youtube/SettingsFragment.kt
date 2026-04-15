@@ -1,7 +1,9 @@
 package com.youtube
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -21,20 +23,16 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
     companion object {
         fun show(fm: FragmentManager) {
-            YoutubeSettingsBottomSheet().show(fm, "browser_headers")
+            YoutubeSettingsBottomSheet().show(fm, "browser_pro")
         }
     }
 
     private val USER_AGENT =
-        "Mozilla/5.0 (Linux; Android 13; M2012K11AG Build/TKQ1.221114.001) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.7727.55 Mobile Safari/537.36"
+        "Mozilla/5.0 (Linux; Android 13; M2012K11AG) AppleWebKit/537.36 Chrome/147.0.7727.55 Mobile Safari/537.36"
 
     private val headers = mapOf(
         "User-Agent" to USER_AGENT,
-        "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "accept-language" to "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7",
-        "referer" to "https://www.google.com/",
-        "x-requested-with" to "mark.via.gp",
-        "upgrade-insecure-requests" to "1"
+        "x-requested-with" to "mark.via.gp"
     )
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -48,35 +46,28 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#121212"))
+            setBackgroundColor(Color.BLACK)
         }
 
         val topBar = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(10, 10, 10, 10)
-            setBackgroundColor(Color.parseColor("#222222"))
+            setBackgroundColor(Color.DKGRAY)
             gravity = Gravity.CENTER_VERTICAL
         }
 
         val urlInput = EditText(ctx).apply {
             hint = "أدخل الرابط..."
-            setHintTextColor(Color.GRAY)
             setTextColor(Color.WHITE)
-            layoutParams =
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            setSingleLine(true)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
 
         val openBtn = Button(ctx).apply {
             text = "فتح"
-            setBackgroundColor(Color.parseColor("#007AFF"))
-            setTextColor(Color.WHITE)
         }
 
         val backBtn = Button(ctx).apply {
             text = "رجوع"
-            setBackgroundColor(Color.DKGRAY)
-            setTextColor(Color.WHITE)
         }
 
         topBar.addView(urlInput)
@@ -86,7 +77,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         webContainer = FrameLayout(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
                 1f
             )
         }
@@ -97,21 +88,13 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         root.addView(topBar)
         root.addView(webContainer)
 
-        // زر فتح
         openBtn.setOnClickListener {
-            val input = urlInput.text.toString().trim()
-            if (input.isNotEmpty()) {
-                val url = if (input.startsWith("http")) input else "https://$input"
-                mainWebView.loadUrl(url, headers)
-            }
+            val url = urlInput.text.toString()
+            mainWebView.loadUrl(url, headers)
         }
 
-        // زر رجوع
         backBtn.setOnClickListener {
-            if (webContainer.childCount > 1) {
-                // إغلاق popup
-                webContainer.removeViewAt(webContainer.childCount - 1)
-            } else if (mainWebView.canGoBack()) {
+            if (mainWebView.canGoBack()) {
                 mainWebView.goBack()
             }
         }
@@ -121,42 +104,66 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun createWebView(): WebView {
+
         val webView = WebView(requireContext())
 
         val s = webView.settings
 
+        // 🔥 تفعيل JS بالكامل
         s.javaScriptEnabled = true
         s.domStorageEnabled = true
         s.databaseEnabled = true
+        s.allowFileAccess = true
+        s.allowContentAccess = true
         s.setSupportMultipleWindows(true)
         s.javaScriptCanOpenWindowsAutomatically = true
         s.loadsImagesAutomatically = true
-        s.useWideViewPort = true
-        s.loadWithOverviewMode = true
-        s.setSupportZoom(true)
-        s.builtInZoomControls = true
-        s.displayZoomControls = false
-        s.allowFileAccess = true
-        s.allowContentAccess = true
         s.mediaPlaybackRequiresUserGesture = false
         s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
 
+        // 🔥 Desktop behavior
+        s.useWideViewPort = true
+        s.loadWithOverviewMode = true
+
+        // 🔥 UA
         s.userAgentString = USER_AGENT
 
-        val cookieManager = CookieManager.getInstance()
-        cookieManager.setAcceptCookie(true)
-        cookieManager.setAcceptThirdPartyCookies(webView, true)
+        CookieManager.getInstance().setAcceptCookie(true)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
 
         webView.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                view?.loadUrl(request?.url.toString(), headers)
+
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): Boolean {
+
+                val url = request?.url.toString()
+
+                // 🔥 معالجة intent://
+                if (url.startsWith("intent://")) {
+                    try {
+                        val intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+                        startActivity(intent)
+                    } catch (e: Exception) {
+                        // تجاهل إذا فشل
+                    }
+                    return true
+                }
+
+                // 🔥 فتح بالخلف بدون التأثير
+                val bgWebView = createWebView()
+                bgWebView.loadUrl(url, headers)
+
+                webContainer.addView(bgWebView)
+                bgWebView.visibility = View.GONE // 👈 مخفي (خلفي)
+
                 return true
             }
         }
 
         webView.webChromeClient = object : WebChromeClient() {
 
-            // 🔥 دعم النوافذ المنبثقة بدون تخريب الصفحة
             override fun onCreateWindow(
                 view: WebView?,
                 isDialog: Boolean,
@@ -177,13 +184,5 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         }
 
         return webView
-    }
-
-    override fun onStart() {
-        super.onStart()
-        dialog?.window?.setLayout(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        )
     }
 }
