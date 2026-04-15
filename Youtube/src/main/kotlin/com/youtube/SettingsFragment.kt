@@ -20,7 +20,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
     companion object {
         fun show(fm: FragmentManager) {
-            YoutubeSettingsBottomSheet().show(fm, "desktop_browser")
+            YoutubeSettingsBottomSheet().show(fm, "browser_clean")
         }
     }
 
@@ -28,7 +28,12 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
 
     @SuppressLint("SetJavaScriptEnabled")
-    override fun onCreateView(inflater: android.view.LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+    override fun onCreateView(
+        inflater: android.view.LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
+
         val ctx = requireContext()
 
         val root = LinearLayout(ctx).apply {
@@ -47,7 +52,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             hint = "أدخل الرابط..."
             setHintTextColor(Color.GRAY)
             setTextColor(Color.WHITE)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            layoutParams =
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             setSingleLine(true)
         }
 
@@ -92,6 +98,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
         val s = webView.settings
 
+        // إعدادات أساسية قوية
         s.javaScriptEnabled = true
         s.domStorageEnabled = true
         s.databaseEnabled = true
@@ -100,67 +107,31 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         s.loadsImagesAutomatically = true
         s.useWideViewPort = true
         s.loadWithOverviewMode = true
+        s.setSupportZoom(true)
+        s.builtInZoomControls = true
+        s.displayZoomControls = false
         s.allowFileAccess = true
         s.allowContentAccess = true
         s.mediaPlaybackRequiresUserGesture = false
         s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
 
-        // 🔥 Desktop UA
+        // ✅ User-Agent ويندوز
         s.userAgentString = USER_AGENT
 
-        // 🔥 كوكيز
+        // ✅ كوكيز
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
 
         WebView.setWebContentsDebuggingEnabled(true)
 
+        // متصفح طبيعي
         webView.webViewClient = object : WebViewClient() {
 
-            override fun onPageFinished(view: WebView?, url: String?) {
-
-                // 🔥 Spoof كامل
-                view?.evaluateJavascript(
-                    """
-                    // إزالة webdriver
-                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-
-                    // نظام ويندوز
-                    Object.defineProperty(navigator, 'platform', {get: () => 'Win32'});
-
-                    // لغات
-                    Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});
-
-                    // بدون لمس
-                    Object.defineProperty(navigator, 'maxTouchPoints', {get: () => 0});
-
-                    // Plugins مزيفة
-                    Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
-
-                    // Chrome object
-                    window.chrome = { runtime: {} };
-
-                    // Hardware
-                    Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
-                    Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
-
-                    // Screen spoof
-                    Object.defineProperty(screen, 'width', {get: () => 1920});
-                    Object.defineProperty(screen, 'height', {get: () => 1080});
-
-                    // Canvas spoof
-                    const getContext = HTMLCanvasElement.prototype.getContext;
-                    HTMLCanvasElement.prototype.getContext = function() {
-                        const ctx = getContext.apply(this, arguments);
-                        return ctx;
-                    };
-
-                    """.trimIndent(),
-                    null
-                )
-            }
-
-            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): Boolean {
                 view?.loadUrl(request?.url.toString())
                 return true
             }
