@@ -21,12 +21,12 @@ import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.FragmentManager
 import java.util.Stack
 
+// ملاحظة: قد تحتاج لتغيير اسم الكلاس إلى SettingsFragment.kt كما هو في سجل الأخطاء
 class YoutubeSettingsBottomSheet : DialogFragment() {
 
     private lateinit var webContainer: FrameLayout
     private val webStack = Stack<WebView>()
 
-    // ✨ تم تحديثه ليكون مشابهاً لكروم على أجهزة حديثة
     private val USER_AGENT =
         "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
 
@@ -40,7 +40,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     override fun onCreateView(inflater: android.view.LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val ctx = requireContext()
 
-        // --- الواجهة الكاملة برمجياً ---
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.BLACK)
@@ -97,7 +96,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
         backBtn.setOnClickListener { handleBack() }
         
-        // تحميل صفحة جوجل عند البداية
         loadUrlSmart(mainWebView, "https://google.com")
 
         return root
@@ -135,36 +133,29 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     private fun createWebView(context: Context, progressBar: ProgressBar, urlInput: EditText): WebView {
         val webView = WebView(context)
         
-        // ✨ تفعيل تسريع العتاد (Hardware Acceleration) لتحسين الأداء بشكل كبير
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
         val s = webView.settings
         
-        // --- إعدادات أساسية لـ JavaScript والتخزين ---
         s.javaScriptEnabled = true
         s.domStorageEnabled = true
         s.databaseEnabled = true
         s.javaScriptCanOpenWindowsAutomatically = true
         s.setSupportMultipleWindows(true)
-
-        // --- إعدادات التوافق والمحتوى (هذه هي الأهم لحل مشكلتك) ---
-        s.userAgentString = USER_AGENT // استخدام وكيل مستخدم حديث
-        s.mediaPlaybackRequiresUserGesture = false // للسماح بتشغيل الفيديو تلقائياً
-        s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW // السماح بتحميل محتوى http داخل صفحة https
-        s.allowFileAccess = true // السماح بالوصول للملفات
+        s.userAgentString = USER_AGENT
+        s.mediaPlaybackRequiresUserGesture = false
+        s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        s.allowFileAccess = true
         s.allowContentAccess = true
         s.loadsImagesAutomatically = true
-        
-        // --- إعدادات الـ Viewport لجعل المواقع تظهر بشكل صحيح على الموبايل ---
         s.useWideViewPort = true
         s.loadWithOverviewMode = true
         
-        // --- إعدادات الكاش لتحسين سرعة التحميل ---
-        s.setAppCacheEnabled(true)
-        s.setAppCachePath(context.cacheDir.path)
-        s.cacheMode = WebSettings.LOAD_DEFAULT
+        // --- إعدادات الكاش (تم حذف الأسطر القديمة) ---
+        // s.setAppCacheEnabled(true) // ❌ تم الحذف لأنه لم يعد موجوداً
+        // s.setAppCachePath(context.cacheDir.path) // ❌ تم الحذف لأنه لم يعد موجوداً
+        s.cacheMode = WebSettings.LOAD_DEFAULT // ✅ هذا السطر هو الطريقة الحديثة والصحيحة
 
-        // --- التعامل مع الكوكيز ---
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
 
@@ -179,7 +170,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             }
             
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                // يمكنك عرض صفحة خطأ مخصصة هنا
                 super.onReceivedError(view, request, error)
             }
         }
@@ -190,15 +180,12 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             }
             
             override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message): Boolean {
-                val newWebView = createWebView(context, progressBar, urlInput) // إنشاء WebView جديد للنوافذ المنبثقة
-                
+                val newWebView = createWebView(context, progressBar, urlInput)
                 webStack.push(newWebView)
                 webContainer.addView(newWebView)
-                
                 val transport = resultMsg.obj as WebView.WebViewTransport
                 transport.webView = newWebView
                 resultMsg.sendToTarget()
-                
                 return true
             }
         }
