@@ -16,24 +16,23 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
-import android.widget.Toast
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.FragmentManager
 import java.util.Stack
 
-// ملاحظة: قد تحتاج لتغيير اسم الكلاس إلى SettingsFragment.kt
+// اسم الكلاس يجب أن يطابق اسم ملفك، مثلاً SettingsFragment
 class YoutubeSettingsBottomSheet : DialogFragment() {
 
     private lateinit var webContainer: FrameLayout
     private val webStack = Stack<WebView>()
 
+    // ✨ User-Agent جديد ومحدث لهاتف سامسونج شائع
     private val USER_AGENT =
-        "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+        "Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36"
 
-    // ✨ تم إرجاع الهيدرز المخصصة
     private val headers = mapOf(
         "User-Agent" to USER_AGENT,
-        "x-requested-with" to "mark.via.gp" // هذا هيدر مخصص قد تحتاجه بعض المواقع
+        "x-requested-with" to "mark.via.gp"
     )
 
     companion object {
@@ -45,7 +44,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreateView(inflater: android.view.LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val ctx = requireContext()
-
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.BLACK)
@@ -92,8 +90,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
         urlInput.setOnEditorActionListener { v, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_GO) {
-                val input = v.text.toString()
-                loadUrlSmart(webStack.peek(), input)
+                loadUrlSmart(webStack.peek(), v.text.toString())
                 true
             } else {
                 false
@@ -111,15 +108,10 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         if (input.isBlank()) return
         
         val url = if (Patterns.WEB_URL.matcher(input).matches()) {
-            if (input.startsWith("http://") || input.startsWith("https://")) {
-                input
-            } else {
-                "https://$input"
-            }
+            if (input.startsWith("http://") || input.startsWith("https://")) input else "https://$input"
         } else {
             "https://www.google.com/search?q=${Uri.encode(input)}"
         }
-        // ✨ يتم الآن تحميل الرابط مع الهيدرز
         webView.loadUrl(url, headers)
     }
 
@@ -128,11 +120,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             val top = webStack.pop()
             webContainer.removeView(top)
             top.destroy()
-        } else {
-            val current = webStack.peek()
-            if (current.canGoBack()) {
-                current.goBack()
-            }
+        } else if (webStack.peek().canGoBack()) {
+            webStack.peek().goBack()
         }
     }
 
@@ -144,16 +133,16 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
         val s = webView.settings
         
+        // --- هذه الإعدادات ضرورية لعمل المواقع الحديثة ---
         s.javaScriptEnabled = true
-        s.domStorageEnabled = true
+        s.domStorageEnabled = true // مهم جداً للمواقع التي تستخدم localStorage
         s.databaseEnabled = true
         s.javaScriptCanOpenWindowsAutomatically = true
         s.setSupportMultipleWindows(true)
         s.userAgentString = USER_AGENT
         s.mediaPlaybackRequiresUserGesture = false
-        s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW // مهم للسماح بتحميل محتوى http و https معاً
         s.allowFileAccess = true
-        s.allowContentAccess = true
         s.loadsImagesAutomatically = true
         s.useWideViewPort = true
         s.loadWithOverviewMode = true
@@ -172,16 +161,12 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 progressBar.visibility = View.GONE
             }
 
-            // ✨ تمت إضافة هذه الدالة مرة أخرى لضمان إرسال الهيدرز عند كل تنقل
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString()
                 if (url != null) {
-                    if (url.startsWith("intent://") || url.startsWith("market://")) {
-                        // منع فتح التطبيقات الخارجية
-                        return true 
-                    }
-                    view?.loadUrl(url, headers) // الأهم: إعادة التحميل مع الهيدرز
-                    return true // يعني أننا عالجنا الطلب
+                    if (url.startsWith("intent://") || url.startsWith("market://")) return true
+                    view?.loadUrl(url, headers)
+                    return true
                 }
                 return false
             }
