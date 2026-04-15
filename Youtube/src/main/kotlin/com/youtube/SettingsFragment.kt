@@ -131,8 +131,35 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         webView.webViewClient = object : WebViewClient() {
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                view?.loadUrl(request?.url.toString(), headers)
+
+                val url = request?.url.toString()
+
+                // 🔥 منع intent
+                if (url.startsWith("intent://")) return true
+
+                // 🔥 منع market
+                if (url.startsWith("market://")) return true
+
+                view?.loadUrl(url, headers)
                 return true
+            }
+
+            // 🔥 منع إعادة تشغيل intent عبر JS
+            override fun onPageFinished(view: WebView?, url: String?) {
+                view?.evaluateJavascript(
+                    """
+                    (function() {
+                        const oldOpen = window.open;
+                        window.open = function(url) {
+                            if (url && url.startsWith('intent://')) {
+                                return null;
+                            }
+                            return oldOpen.apply(this, arguments);
+                        };
+                    })();
+                    """.trimIndent(),
+                    null
+                )
             }
         }
 
