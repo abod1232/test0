@@ -75,12 +75,11 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         topBar.addView(backBtn)
 
         webContainer = FrameLayout(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            )
-        }
+    layoutParams = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.MATCH_PARENT
+    )
+}
 
         mainWebView = createWebView()
         webContainer.addView(mainWebView)
