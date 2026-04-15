@@ -32,7 +32,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "accept-language" to "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7",
         "referer" to "https://www.google.com/",
-        "x-requested-with" to "mark.via.gp",
+        "x-requested-with" to "com.sec.android.app.sbrowser",
         "upgrade-insecure-requests" to "1"
     )
 
