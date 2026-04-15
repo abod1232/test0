@@ -16,7 +16,8 @@ import androidx.fragment.app.FragmentManager
 
 class YoutubeSettingsBottomSheet : DialogFragment() {
 
-    private lateinit var webView: WebView
+    private lateinit var mainWebView: WebView
+    private lateinit var webContainer: FrameLayout
 
     companion object {
         fun show(fm: FragmentManager) {
@@ -32,7 +33,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "accept-language" to "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7",
         "referer" to "https://www.google.com/",
-        "x-requested-with" to "com.sec.android.app.sbrowser",
+        "x-requested-with" to "mark.via.gp",
         "upgrade-insecure-requests" to "1"
     )
 
@@ -72,30 +73,46 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             setTextColor(Color.WHITE)
         }
 
+        val backBtn = Button(ctx).apply {
+            text = "رجوع"
+            setBackgroundColor(Color.DKGRAY)
+            setTextColor(Color.WHITE)
+        }
+
         topBar.addView(urlInput)
         topBar.addView(openBtn)
+        topBar.addView(backBtn)
 
-        webView = WebView(ctx)
-
-        val containerView = FrameLayout(ctx).apply {
+        webContainer = FrameLayout(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 1f
             )
-            addView(webView)
         }
 
+        mainWebView = createWebView()
+        webContainer.addView(mainWebView)
+
         root.addView(topBar)
-        root.addView(containerView)
+        root.addView(webContainer)
 
-        setupWebView()
-
+        // زر فتح
         openBtn.setOnClickListener {
             val input = urlInput.text.toString().trim()
             if (input.isNotEmpty()) {
                 val url = if (input.startsWith("http")) input else "https://$input"
-                webView.loadUrl(url, headers)
+                mainWebView.loadUrl(url, headers)
+            }
+        }
+
+        // زر رجوع
+        backBtn.setOnClickListener {
+            if (webContainer.childCount > 1) {
+                // إغلاق popup
+                webContainer.removeViewAt(webContainer.childCount - 1)
+            } else if (mainWebView.canGoBack()) {
+                mainWebView.goBack()
             }
         }
 
@@ -103,7 +120,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun setupWebView() {
+    private fun createWebView(): WebView {
+        val webView = WebView(requireContext())
 
         val s = webView.settings
 
@@ -123,27 +141,42 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         s.mediaPlaybackRequiresUserGesture = false
         s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
 
-        // نفس UA المستخدم في الهيدرز
         s.userAgentString = USER_AGENT
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
 
-        WebView.setWebContentsDebuggingEnabled(true)
-
         webView.webViewClient = object : WebViewClient() {
-
-            override fun shouldOverrideUrlLoading(
-                view: WebView?,
-                request: WebResourceRequest?
-            ): Boolean {
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 view?.loadUrl(request?.url.toString(), headers)
                 return true
             }
         }
 
-        webView.webChromeClient = WebChromeClient()
+        webView.webChromeClient = object : WebChromeClient() {
+
+            // 🔥 دعم النوافذ المنبثقة بدون تخريب الصفحة
+            override fun onCreateWindow(
+                view: WebView?,
+                isDialog: Boolean,
+                isUserGesture: Boolean,
+                resultMsg: android.os.Message?
+            ): Boolean {
+
+                val newWebView = createWebView()
+
+                webContainer.addView(newWebView)
+
+                val transport = resultMsg?.obj as WebView.WebViewTransport
+                transport.webView = newWebView
+                resultMsg.sendToTarget()
+
+                return true
+            }
+        }
+
+        return webView
     }
 
     override fun onStart() {
