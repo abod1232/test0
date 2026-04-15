@@ -20,12 +20,21 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
     companion object {
         fun show(fm: FragmentManager) {
-            YoutubeSettingsBottomSheet().show(fm, "browser_clean")
+            YoutubeSettingsBottomSheet().show(fm, "browser_headers")
         }
     }
 
     private val USER_AGENT =
         "Mozilla/5.0 (Linux; Android 13; M2012K11AG Build/TKQ1.221114.001) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.7727.55 Mobile Safari/537.36"
+
+    private val headers = mapOf(
+        "User-Agent" to USER_AGENT,
+        "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "accept-language" to "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7",
+        "referer" to "https://www.google.com/",
+        "x-requested-with" to "mark.via.gp",
+        "upgrade-insecure-requests" to "1"
+    )
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreateView(
@@ -86,7 +95,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             val input = urlInput.text.toString().trim()
             if (input.isNotEmpty()) {
                 val url = if (input.startsWith("http")) input else "https://$input"
-                webView.loadUrl(url)
+                webView.loadUrl(url, headers)
             }
         }
 
@@ -98,7 +107,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
         val s = webView.settings
 
-        // إعدادات أساسية قوية
         s.javaScriptEnabled = true
         s.domStorageEnabled = true
         s.databaseEnabled = true
@@ -115,24 +123,22 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         s.mediaPlaybackRequiresUserGesture = false
         s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
 
-        // ✅ User-Agent ويندوز
+        // نفس UA المستخدم في الهيدرز
         s.userAgentString = USER_AGENT
 
-        // ✅ كوكيز
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
 
         WebView.setWebContentsDebuggingEnabled(true)
 
-        // متصفح طبيعي
         webView.webViewClient = object : WebViewClient() {
 
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: WebResourceRequest?
             ): Boolean {
-                view?.loadUrl(request?.url.toString())
+                view?.loadUrl(request?.url.toString(), headers)
                 return true
             }
         }
