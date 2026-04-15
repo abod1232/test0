@@ -21,7 +21,7 @@ import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.FragmentManager
 import java.util.Stack
 
-// ملاحظة: قد تحتاج لتغيير اسم الكلاس إلى SettingsFragment.kt كما هو في سجل الأخطاء
+// ملاحظة: قد تحتاج لتغيير اسم الكلاس إلى SettingsFragment.kt
 class YoutubeSettingsBottomSheet : DialogFragment() {
 
     private lateinit var webContainer: FrameLayout
@@ -29,6 +29,12 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
     private val USER_AGENT =
         "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+
+    // ✨ تم إرجاع الهيدرز المخصصة
+    private val headers = mapOf(
+        "User-Agent" to USER_AGENT,
+        "x-requested-with" to "mark.via.gp" // هذا هيدر مخصص قد تحتاجه بعض المواقع
+    )
 
     companion object {
         fun show(fm: FragmentManager) {
@@ -113,7 +119,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         } else {
             "https://www.google.com/search?q=${Uri.encode(input)}"
         }
-        webView.loadUrl(url)
+        // ✨ يتم الآن تحميل الرابط مع الهيدرز
+        webView.loadUrl(url, headers)
     }
 
     private fun handleBack() {
@@ -150,11 +157,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         s.loadsImagesAutomatically = true
         s.useWideViewPort = true
         s.loadWithOverviewMode = true
-        
-        // --- إعدادات الكاش (تم حذف الأسطر القديمة) ---
-        // s.setAppCacheEnabled(true) // ❌ تم الحذف لأنه لم يعد موجوداً
-        // s.setAppCachePath(context.cacheDir.path) // ❌ تم الحذف لأنه لم يعد موجوداً
-        s.cacheMode = WebSettings.LOAD_DEFAULT // ✅ هذا السطر هو الطريقة الحديثة والصحيحة
+        s.cacheMode = WebSettings.LOAD_DEFAULT
 
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
@@ -168,7 +171,21 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 progressBar.visibility = View.GONE
             }
-            
+
+            // ✨ تمت إضافة هذه الدالة مرة أخرى لضمان إرسال الهيدرز عند كل تنقل
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                val url = request?.url?.toString()
+                if (url != null) {
+                    if (url.startsWith("intent://") || url.startsWith("market://")) {
+                        // منع فتح التطبيقات الخارجية
+                        return true 
+                    }
+                    view?.loadUrl(url, headers) // الأهم: إعادة التحميل مع الهيدرز
+                    return true // يعني أننا عالجنا الطلب
+                }
+                return false
+            }
+
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 super.onReceivedError(view, request, error)
             }
