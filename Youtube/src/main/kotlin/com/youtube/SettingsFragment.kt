@@ -25,43 +25,15 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     private lateinit var webContainer: FrameLayout
     private val webStack = Stack<WebView>()
 
-    // User-Agent حديث ومستقر
     private val USER_AGENT = "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
 
-    // ✨ الهيدر المطلوب
-    private val TARGET_DOMAIN = "cimanow"
-    private val CUSTOM_HEADER_KEY = "x-requested-with"
-    private val CUSTOM_HEADER_VALUE = "mark.via.gp"
+    // الهيدر الذي نريده للكل
+    private val customHeaders = mapOf(
+        "x-requested-with" to "mark.via.gp"
+    )
 
-    // سكربت تخطي حماية التوقف (Anti-Debugger)
-    private val ANTI_DEBUGGER_SCRIPT = """
-        javascript:(function() {
-            const _constructor = Function.prototype.constructor;
-            Function.prototype.constructor = function(...args) {
-                if (args.length > 0) {
-                    let lastArg = args[args.length - 1];
-                    if (typeof lastArg === 'string' && lastArg.includes('debugger')) {
-                        args[args.length - 1] = lastArg.replace(/debugger\s*;/g, '');
-                    }
-                }
-                return _constructor.apply(this, args);
-            };
-            const _eval = window.eval;
-            window.eval = function(code) {
-                if (typeof code === 'string' && code.includes('debugger')) {
-                    code = code.replace(/debugger\s*;/g, '');
-                }
-                return _eval.apply(this, [code]);
-            };
-            const _setInterval = window.setInterval;
-            window.setInterval = function(fn, time, ...args) {
-                if (typeof fn === 'string' && fn.includes('debugger')) {
-                    fn = fn.replace(/debugger\s*;/g, '');
-                }
-                return _setInterval(fn, time, ...args);
-            };
-        })();
-    """.trimIndent()
+    // الرابط المستثنى
+    private val EXCLUDED_DOMAIN = "rm.freex2line.online"
 
     companion object {
         fun show(fm: FragmentManager) {
@@ -100,12 +72,12 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             if (input.startsWith("http://") || input.startsWith("https://")) input else "https://$input"
         } else { "https://www.google.com/search?q=${Uri.encode(input)}" }
         
-        // عند الكتابة في شريط البحث، نرسل الهيدر دائماً إذا كان الموقع المستهدف
-        val headers = mutableMapOf<String, String>()
-        if (url.contains(TARGET_DOMAIN)) {
-            headers[CUSTOM_HEADER_KEY] = CUSTOM_HEADER_VALUE
+        // تطبيق الاستثناء حتى عند الكتابة في شريط البحث
+        if (url.contains(EXCLUDED_DOMAIN)) {
+            webView.loadUrl(url) // بدون هيدرات
+        } else {
+            webView.loadUrl(url, customHeaders) // مع الهيدرات
         }
-        webView.loadUrl(url, headers)
     }
 
     private fun handleBack() {
@@ -141,39 +113,35 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 progressBar.visibility = View.VISIBLE
                 urlInput.setText(url)
-                view?.evaluateJavascript(ANTI_DEBUGGER_SCRIPT, null)
             }
             
             override fun onPageFinished(view: WebView?, url: String?) {
                 progressBar.visibility = View.GONE
-                view?.evaluateJavascript(ANTI_DEBUGGER_SCRIPT, null)
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return false
                 
-                // منع فتح التطبيقات الخارجية
+                // منع التطبيقات الخارجية
                 if (url.startsWith("intent://") || url.startsWith("market://")) return true 
                 
-                // ✨ الفحص الذكي: هل الرابط الجديد هو للموقع المطلوب؟ وهل هو الإطار الرئيسي (ليس إعلان أو iframe)؟
-                if (request != null && request.isForMainFrame && url.contains(TARGET_DOMAIN)) {
-                    
-                    val customHeaders = mutableMapOf<String, String>()
-                    customHeaders[CUSTOM_HEADER_KEY] = CUSTOM_HEADER_VALUE
-                    
-                    // ✨ إضافة الـ Referer بشكل يدوي لمنع الطرد من Cloudflare أو WAF
-                    val currentUrl = view?.url
-                    if (!currentUrl.isNullOrEmpty()) {
-                        customHeaders["Referer"] = currentUrl
-                    }
-
-                    // نحمل الرابط مع الهيدرات الخاصة بنا
-                    view?.loadUrl(url, customHeaders)
-                    return true // نخبر المتصفح أننا تعاملنا مع الرابط
+                // ✨ الاستثناء: إذا كان الرابط هو الرابط المطلوب تخطيه
+                if (url.contains(EXCLUDED_DOMAIN)) {
+                    return false // نترك المتصفح يحمله بشكل طبيعي تماماً بدون تدخلنا
                 }
 
-                // ✨ إذا كان أي موقع آخر، أو ملف داخلي، اتركه يفتح بشكل طبيعي 100%
-                return false
+                // ✨ لكل الروابط الأخرى: نطبق الهيدر المخصص
+                val headersToApply = mutableMapOf<String, String>()
+                headersToApply.putAll(customHeaders)
+                
+                // إضافة Referer كإجراء أمني إضافي لمنع مشاكل الـ Redirect
+                val currentUrl = view?.url
+                if (!currentUrl.isNullOrEmpty()) {
+                    headersToApply["Referer"] = currentUrl
+                }
+
+                view?.loadUrl(url, headersToApply)
+                return true
             }
         }
 
