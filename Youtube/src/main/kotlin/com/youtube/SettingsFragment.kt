@@ -25,16 +25,11 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     private lateinit var webContainer: FrameLayout
     private val webStack = Stack<WebView>()
 
-    private val USER_AGENT = "Mozilla/5.0 (Linux; Android 13; SM-A536B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36"
+    // تم تحديث الـ User-Agent لإخفاء أي أثر للـ WebView
+    private val USER_AGENT = "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
 
-    private val baseCustomHeaders = mapOf(
-        "x-requested-with" to "mark.via.gp"
-    )
-
-    // ✨ هذا هو السكربت السحري الذي يكسر حماية التوقف (Anti-Debugger)
     private val ANTI_DEBUGGER_SCRIPT = """
         javascript:(function() {
-            // 1. تعطيل استدعاء الـ debugger عبر الدالة constructor
             const _constructor = Function.prototype.constructor;
             Function.prototype.constructor = function(...args) {
                 if (args.length > 0) {
@@ -45,8 +40,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 }
                 return _constructor.apply(this, args);
             };
-
-            // 2. تعطيل استدعاء الـ debugger عبر eval
             const _eval = window.eval;
             window.eval = function(code) {
                 if (typeof code === 'string' && code.includes('debugger')) {
@@ -54,8 +47,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 }
                 return _eval.apply(this, [code]);
             };
-
-            // 3. تعطيل استدعاء الـ debugger عبر setInterval
             const _setInterval = window.setInterval;
             window.setInterval = function(fn, time, ...args) {
                 if (typeof fn === 'string' && fn.includes('debugger')) {
@@ -63,9 +54,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 }
                 return _setInterval(fn, time, ...args);
             };
-            
-            // 4. إخفاء رسائل الـ Console التي يرسلونها للتمويه
-            console.clear = function() {};
         })();
     """.trimIndent()
 
@@ -95,6 +83,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             if (actionId == EditorInfo.IME_ACTION_GO) { loadUrlSmart(webStack.peek(), v.text.toString()); true } else false
         }
         backBtn.setOnClickListener { handleBack() }
+        
+        // تحميل الصفحة الافتراضية
         loadUrlSmart(mainWebView, "https://google.com")
         return root
     }
@@ -104,7 +94,10 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         val url = if (Patterns.WEB_URL.matcher(input).matches()) {
             if (input.startsWith("http://") || input.startsWith("https://")) input else "https://$input"
         } else { "https://www.google.com/search?q=${Uri.encode(input)}" }
-        webView.loadUrl(url, baseCustomHeaders)
+        
+        // ✨ نرسل الهيدر المخصص فقط عند البحث الأولي من الشريط العلوي
+        val initialHeaders = mapOf("x-requested-with" to "mark.via.gp")
+        webView.loadUrl(url, initialHeaders)
     }
 
     private fun handleBack() {
@@ -132,8 +125,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         s.useWideViewPort = true
         s.javaScriptCanOpenWindowsAutomatically = true
         s.setSupportMultipleWindows(true)
-        s.allowFileAccess = true
-        s.allowContentAccess = true
         
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
@@ -142,32 +133,27 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 progressBar.visibility = View.VISIBLE
                 urlInput.setText(url)
-                
-                // ✨ حقن السكربت بمجرد بدء تحميل الصفحة لتعطيل فخ التوقف
                 view?.evaluateJavascript(ANTI_DEBUGGER_SCRIPT, null)
             }
             
             override fun onPageFinished(view: WebView?, url: String?) {
                 progressBar.visibility = View.GONE
-                
-                // ✨ حقن السكربت مرة أخرى للتأكد من تعطيله في حال تم تغييره بعد التحميل
                 view?.evaluateJavascript(ANTI_DEBUGGER_SCRIPT, null)
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return false
-                if (url.startsWith("intent://") || url.startsWith("market://")) return true
                 
-                val dynamicHeaders = mutableMapOf<String, String>()
-                dynamicHeaders.putAll(baseCustomHeaders)
-                
-                val currentUrl = view?.url
-                if (!currentUrl.isNullOrEmpty()) {
-                    dynamicHeaders["Referer"] = currentUrl
+                // منع التطبيقات الخارجية
+                if (url.startsWith("intent://") || url.startsWith("market://") || url.startsWith("whatsapp://")) {
+                    return true 
                 }
-
-                view?.loadUrl(url, dynamicHeaders)
-                return true
+                
+                // ✨ السحر هنا: نرجع false
+                // هذا يخبر الـ WebView أن يتعامل مع الرابط بنفسه بشكل طبيعي
+                // سيقوم المتصفح تلقائياً بإرسال الـ Referer والـ Cookies الصحيحة
+                // ولن يكتشف الموقع أننا تطبيق معدل وسيعرض التصميم بشكل كامل
+                return false
             }
         }
 
