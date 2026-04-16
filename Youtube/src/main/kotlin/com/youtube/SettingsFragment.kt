@@ -27,10 +27,47 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
     private val USER_AGENT = "Mozilla/5.0 (Linux; Android 13; SM-A536B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36"
 
-    // ✨ فقط الهيدر الاستثنائي الذي نريده
     private val baseCustomHeaders = mapOf(
         "x-requested-with" to "mark.via.gp"
     )
+
+    // ✨ هذا هو السكربت السحري الذي يكسر حماية التوقف (Anti-Debugger)
+    private val ANTI_DEBUGGER_SCRIPT = """
+        javascript:(function() {
+            // 1. تعطيل استدعاء الـ debugger عبر الدالة constructor
+            const _constructor = Function.prototype.constructor;
+            Function.prototype.constructor = function(...args) {
+                if (args.length > 0) {
+                    let lastArg = args[args.length - 1];
+                    if (typeof lastArg === 'string' && lastArg.includes('debugger')) {
+                        args[args.length - 1] = lastArg.replace(/debugger\s*;/g, '');
+                    }
+                }
+                return _constructor.apply(this, args);
+            };
+
+            // 2. تعطيل استدعاء الـ debugger عبر eval
+            const _eval = window.eval;
+            window.eval = function(code) {
+                if (typeof code === 'string' && code.includes('debugger')) {
+                    code = code.replace(/debugger\s*;/g, '');
+                }
+                return _eval.apply(this, [code]);
+            };
+
+            // 3. تعطيل استدعاء الـ debugger عبر setInterval
+            const _setInterval = window.setInterval;
+            window.setInterval = function(fn, time, ...args) {
+                if (typeof fn === 'string' && fn.includes('debugger')) {
+                    fn = fn.replace(/debugger\s*;/g, '');
+                }
+                return _setInterval(fn, time, ...args);
+            };
+            
+            // 4. إخفاء رسائل الـ Console التي يرسلونها للتمويه
+            console.clear = function() {};
+        })();
+    """.trimIndent()
 
     companion object {
         fun show(fm: FragmentManager) {
@@ -48,6 +85,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         topBar.addView(urlInput); topBar.addView(backBtn)
         val progressBar = ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal).apply { layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 8); max = 100; progress = 0; visibility = View.GONE }
         webContainer = FrameLayout(ctx).apply { layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f) }
+        
         val mainWebView = createWebView(ctx, progressBar, urlInput)
         webStack.push(mainWebView)
         webContainer.addView(mainWebView)
@@ -66,8 +104,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         val url = if (Patterns.WEB_URL.matcher(input).matches()) {
             if (input.startsWith("http://") || input.startsWith("https://")) input else "https://$input"
         } else { "https://www.google.com/search?q=${Uri.encode(input)}" }
-        
-        // التحميل الأولي من شريط البحث لا يحتاج Referer
         webView.loadUrl(url, baseCustomHeaders)
     }
 
@@ -89,10 +125,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         s.domStorageEnabled = true
         s.databaseEnabled = true
         s.cacheMode = WebSettings.LOAD_DEFAULT
-
-        // ✨ الـ User Agent يوضع هنا ليتم إرساله مع كل شيء تلقائياً (صور، سكربتات، الخ)
         s.userAgentString = USER_AGENT
-        
         s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         s.mediaPlaybackRequiresUserGesture = false
         s.loadWithOverviewMode = true
@@ -109,17 +142,22 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 progressBar.visibility = View.VISIBLE
                 urlInput.setText(url)
+                
+                // ✨ حقن السكربت بمجرد بدء تحميل الصفحة لتعطيل فخ التوقف
+                view?.evaluateJavascript(ANTI_DEBUGGER_SCRIPT, null)
             }
             
             override fun onPageFinished(view: WebView?, url: String?) {
                 progressBar.visibility = View.GONE
+                
+                // ✨ حقن السكربت مرة أخرى للتأكد من تعطيله في حال تم تغييره بعد التحميل
+                view?.evaluateJavascript(ANTI_DEBUGGER_SCRIPT, null)
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return false
                 if (url.startsWith("intent://") || url.startsWith("market://")) return true
                 
-                // ✨ هنا السحر: نقوم بتوليد Referer تلقائي بناءً على الصفحة الحالية
                 val dynamicHeaders = mutableMapOf<String, String>()
                 dynamicHeaders.putAll(baseCustomHeaders)
                 
