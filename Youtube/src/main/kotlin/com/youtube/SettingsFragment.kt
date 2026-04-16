@@ -36,96 +36,155 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
     // ✨ السكربت الشامل الخارق: (1) الهيدرات (2) كسر الـ Debugger (3) قاتل مانع الإعلانات
     private val STEALTH_INJECTION_SCRIPT = """
-        javascript:(function() {
-            // ==========================================
-            // 1. فرض الهيدرات على كل الطلبات المخفية
-            // ==========================================
-            var origOpen = XMLHttpRequest.prototype.open;
-            XMLHttpRequest.prototype.open = function() {
-                origOpen.apply(this, arguments);
-                this.setRequestHeader('$TARGET_HEADER_KEY', '$TARGET_HEADER_VALUE');
-            };
-            
-            var origFetch = window.fetch;
-            window.fetch = function() {
-                var args = arguments;
-                if(args[1] === undefined) { args[1] = {}; }
-                if(args[1].headers === undefined) { args[1].headers = {}; }
-                args[1].headers['$TARGET_HEADER_KEY'] = '$TARGET_HEADER_VALUE';
-                return origFetch.apply(this, args);
-            };
+javascript:(function() {
 
-            // ==========================================
-            // 2. كسر حماية الـ Debugger
-            // ==========================================
-            const _constructor = Function.prototype.constructor;
-            Function.prototype.constructor = function(...args) {
-                if (args.length > 0) {
-                    let lastArg = args[args.length - 1];
-                    if (typeof lastArg === 'string' && lastArg.includes('debugger')) {
-                        args[args.length - 1] = lastArg.replace(/debugger\s*;/g, '');
-                    }
+    // ==========================================
+    // 1. حقن الهيدر في كل الطلبات
+    // ==========================================
+    var origOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function() {
+        origOpen.apply(this, arguments);
+        try { this.setRequestHeader('$TARGET_HEADER_KEY', '$TARGET_HEADER_VALUE'); } catch(e){}
+    };
+
+    var origFetch = window.fetch;
+    window.fetch = function() {
+        var args = arguments;
+        if (!args[1]) args[1] = {};
+        if (!args[1].headers) args[1].headers = {};
+        args[1].headers['$TARGET_HEADER_KEY'] = '$TARGET_HEADER_VALUE';
+        return origFetch.apply(this, args);
+    };
+
+    // ==========================================
+    // 2. تعطيل debugger بالكامل 🔥
+    // ==========================================
+
+    // قتل debugger المباشر
+    try {
+        Object.defineProperty(window, 'debugger', {
+            get: () => function(){},
+            set: () => {}
+        });
+    } catch(e){}
+
+    // تعطيل eval
+    const _eval = window.eval;
+    window.eval = function(code) {
+        if (typeof code === 'string') {
+            code = code.replace(/debugger\s*;/gi, '');
+        }
+        return _eval(code);
+    };
+
+    // تعطيل Function constructor
+    const _Function = Function;
+    Function = function(...args) {
+        if (args.length) {
+            let last = args[args.length - 1];
+            if (typeof last === 'string') {
+                last = last.replace(/debugger\s*;/gi, '');
+                args[args.length - 1] = last;
+            }
+        }
+        return _Function.apply(this, args);
+    };
+
+    // تعطيل setTimeout
+    const _setTimeout = window.setTimeout;
+    window.setTimeout = function(fn, t) {
+        if (typeof fn === 'string') {
+            fn = fn.replace(/debugger\s*;/gi, '');
+        }
+        return _setTimeout(fn, t);
+    };
+
+    // تعطيل setInterval
+    const _setInterval = window.setInterval;
+    window.setInterval = function(fn, t) {
+        if (typeof fn === 'string') {
+            fn = fn.replace(/debugger\s*;/gi, '');
+        }
+        return _setInterval(fn, t);
+    };
+
+    // ==========================================
+    // 3. كسر DevTools detection 🧠
+    // ==========================================
+
+    console.clear = function(){};
+    console.log = console.log.bind(console);
+    console.warn = function(){};
+    console.error = function(){};
+
+    // منع كشف DevTools عبر timing
+    const fakeNow = () => Date.now();
+    performance.now = fakeNow;
+
+    // منع كشف debugger عبر الفرق الزمني
+    setInterval(() => {
+        const start = Date.now();
+        debugger;
+        const end = Date.now();
+        if (end - start > 100) {
+            // تم اكتشاف debugger → تجاهله
+        }
+    }, 1000);
+
+    // ==========================================
+    // 4. Anti Anti-Adblock 💀
+    // ==========================================
+
+    setInterval(function() {
+
+        const elements = document.querySelectorAll('*');
+
+        for (let el of elements) {
+            if (!el.innerText) continue;
+
+            if (
+                el.innerText.includes('إيقاف منع الإعلانات') ||
+                el.innerText.toLowerCase().includes('adblock') ||
+                el.innerText.toLowerCase().includes('disable adblock')
+            ) {
+                let parent = el;
+                while (parent.parentElement &&
+                       parent.parentElement !== document.body &&
+                       parent.parentElement !== document.documentElement) {
+                    parent = parent.parentElement;
                 }
-                return _constructor.apply(this, args);
-            };
-            Function.prototype.constructor.toString = function() { return "function Function() { [native code] }"; };
+                if (parent) parent.remove();
+            }
+        }
 
-            const _eval = window.eval;
-            window.eval = function(code) {
-                if (typeof code === 'string' && code.includes('debugger')) {
-                    code = code.replace(/debugger\s*;/g, '');
-                }
-                return _eval.apply(this, [code]);
-            };
-            window.eval.toString = function() { return "function eval() { [native code] }"; };
+        // إعادة التمرير
+        if (document.body) {
+            document.body.style.setProperty('overflow', 'auto', 'important');
+        }
+        if (document.documentElement) {
+            document.documentElement.style.setProperty('overflow', 'auto', 'important');
+        }
 
-            const _setInterval = window.setInterval;
-            window.setInterval = function(fn, time, ...args) {
-                if (typeof fn === 'string' && fn.includes('debugger')) {
-                    fn = fn.replace(/debugger\s*;/g, '');
-                }
-                return _setInterval.apply(window, [fn, time, ...args]);
-            };
-            window.setInterval.toString = function() { return "function setInterval() { [native code] }"; };
-            
-            console.clear = function() {};
-            console.clear.toString = function() { return "function clear() { [native code] }"; };
+        // خداع الموقع
+        window.adblock = false;
+        window.isAdBlockActive = false;
+        window.canRunAds = true;
 
-            // ==========================================
-            // 3. قاتل رسالة "قم بإيقاف منع الإعلانات" (Anti-Anti-Adblock)
-            // ==========================================
-            setInterval(function() {
-                // البحث عن النصوص التي تظهر في الشاشة البنفسجية
-                const elements = document.querySelectorAll('*');
-                for (let i = 0; i < elements.length; i++) {
-                    const el = elements[i];
-                    // إذا وجدنا الكلمة في أي مكان
-                    if (el.innerText && el.innerText.includes('إيقاف منع الإعلانات')) {
-                        // الصعود للأب الأكبر لحذف الشاشة بالكامل (وليس النص فقط)
-                        let overlay = el;
-                        while (overlay.parentElement && overlay.parentElement !== document.body && overlay.parentElement !== document.documentElement) {
-                            overlay = overlay.parentElement;
-                        }
-                        // حذف الشاشة البنفسجية
-                        if(overlay) overlay.remove();
-                    }
-                }
+    }, 500);
 
-                // إرجاع إمكانية التمرير (النزول والصعود في الصفحة) إذا تم تجميدها
-                if (document.body && document.body.style.overflow === 'hidden') {
-                    document.body.style.setProperty('overflow', 'auto', 'important');
-                }
-                if (document.documentElement && document.documentElement.style.overflow === 'hidden') {
-                    document.documentElement.style.setProperty('overflow', 'auto', 'important');
-                }
+    // ==========================================
+    // 5. قتل loops الخطيرة (anti freeze)
+    // ==========================================
 
-                // خداع سكربت الإعلانات ليعتقد أن كل شيء يعمل
-                window.adblock = false;
-                window.isAdBlockActive = false;
-            }, 500); // يفحص الصفحة كل نصف ثانية للتأكد من قتل الرسالة فور ظهورها
+    const _requestAnimationFrame = window.requestAnimationFrame;
+    window.requestAnimationFrame = function(cb) {
+        return _requestAnimationFrame(function() {
+            try { cb(); } catch(e){}
+        });
+    };
 
-        })();
-    """.trimIndent()
+})();
+""".trimIndent()
 
     companion object {
         fun show(fm: FragmentManager) {
