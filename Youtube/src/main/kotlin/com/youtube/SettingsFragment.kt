@@ -34,7 +34,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         TARGET_HEADER_KEY to TARGET_HEADER_VALUE
     )
 
-    // ✨ السكربت الشامل: (1) يفرض الهيدر (2) يكسر حماية التوقف (3) يخفي نفسه
+    // ✨ السكربت الشامل الخارق: (1) الهيدرات (2) كسر الـ Debugger (3) قاتل مانع الإعلانات
     private val STEALTH_INJECTION_SCRIPT = """
         javascript:(function() {
             // ==========================================
@@ -56,10 +56,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             };
 
             // ==========================================
-            // 2. كسر حماية الـ Debugger (محاكاة الزر الأزرق)
+            // 2. كسر حماية الـ Debugger
             // ==========================================
-            
-            // أ. تعطيل عبر الـ Constructor (مع التمويه)
             const _constructor = Function.prototype.constructor;
             Function.prototype.constructor = function(...args) {
                 if (args.length > 0) {
@@ -70,10 +68,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 }
                 return _constructor.apply(this, args);
             };
-            // تمويه الدالة لتبدو وكأنها أصلية لم يتم المساس بها
             Function.prototype.constructor.toString = function() { return "function Function() { [native code] }"; };
 
-            // ب. تعطيل عبر الـ eval (مع التمويه)
             const _eval = window.eval;
             window.eval = function(code) {
                 if (typeof code === 'string' && code.includes('debugger')) {
@@ -81,10 +77,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 }
                 return _eval.apply(this, [code]);
             };
-            // تمويه الدالة
             window.eval.toString = function() { return "function eval() { [native code] }"; };
 
-            // ج. تعطيل عبر الـ setInterval (مع التمويه)
             const _setInterval = window.setInterval;
             window.setInterval = function(fn, time, ...args) {
                 if (typeof fn === 'string' && fn.includes('debugger')) {
@@ -92,12 +86,44 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 }
                 return _setInterval.apply(window, [fn, time, ...args]);
             };
-            // تمويه الدالة
             window.setInterval.toString = function() { return "function setInterval() { [native code] }"; };
             
-            // د. منع تفريغ الـ Console
             console.clear = function() {};
             console.clear.toString = function() { return "function clear() { [native code] }"; };
+
+            // ==========================================
+            // 3. قاتل رسالة "قم بإيقاف منع الإعلانات" (Anti-Anti-Adblock)
+            // ==========================================
+            setInterval(function() {
+                // البحث عن النصوص التي تظهر في الشاشة البنفسجية
+                const elements = document.querySelectorAll('*');
+                for (let i = 0; i < elements.length; i++) {
+                    const el = elements[i];
+                    // إذا وجدنا الكلمة في أي مكان
+                    if (el.innerText && el.innerText.includes('إيقاف منع الإعلانات')) {
+                        // الصعود للأب الأكبر لحذف الشاشة بالكامل (وليس النص فقط)
+                        let overlay = el;
+                        while (overlay.parentElement && overlay.parentElement !== document.body && overlay.parentElement !== document.documentElement) {
+                            overlay = overlay.parentElement;
+                        }
+                        // حذف الشاشة البنفسجية
+                        if(overlay) overlay.remove();
+                    }
+                }
+
+                // إرجاع إمكانية التمرير (النزول والصعود في الصفحة) إذا تم تجميدها
+                if (document.body && document.body.style.overflow === 'hidden') {
+                    document.body.style.setProperty('overflow', 'auto', 'important');
+                }
+                if (document.documentElement && document.documentElement.style.overflow === 'hidden') {
+                    document.documentElement.style.setProperty('overflow', 'auto', 'important');
+                }
+
+                // خداع سكربت الإعلانات ليعتقد أن كل شيء يعمل
+                window.adblock = false;
+                window.isAdBlockActive = false;
+            }, 500); // يفحص الصفحة كل نصف ثانية للتأكد من قتل الرسالة فور ظهورها
+
         })();
     """.trimIndent()
 
@@ -177,14 +203,12 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 progressBar.visibility = View.VISIBLE
                 urlInput.setText(url)
                 
-                // ✨ زرع السكربت الشبح فوراً
                 view?.evaluateJavascript(STEALTH_INJECTION_SCRIPT, null)
             }
             
             override fun onPageFinished(view: WebView?, url: String?) {
                 progressBar.visibility = View.GONE
                 
-                // ✨ زرعه مرة أخرى للتأكيد
                 view?.evaluateJavascript(STEALTH_INJECTION_SCRIPT, null)
             }
 
