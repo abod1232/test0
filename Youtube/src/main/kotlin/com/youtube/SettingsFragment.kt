@@ -34,17 +34,18 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         TARGET_HEADER_KEY to TARGET_HEADER_VALUE
     )
 
-    // ✨ هذا هو السكربت السحري الذي يجبر أي طلب في الموقع على حمل الهيدر الخاص بك
-    private val INJECT_HEADERS_SCRIPT = """
+    // ✨ السكربت الشامل: (1) يفرض الهيدر (2) يكسر حماية التوقف (3) يخفي نفسه
+    private val STEALTH_INJECTION_SCRIPT = """
         javascript:(function() {
-            // 1. إجبار طلبات XMLHttpRequest (القديمة والشائعة)
+            // ==========================================
+            // 1. فرض الهيدرات على كل الطلبات المخفية
+            // ==========================================
             var origOpen = XMLHttpRequest.prototype.open;
             XMLHttpRequest.prototype.open = function() {
                 origOpen.apply(this, arguments);
                 this.setRequestHeader('$TARGET_HEADER_KEY', '$TARGET_HEADER_VALUE');
             };
             
-            // 2. إجبار طلبات Fetch API (الحديثة والتي تستخدمها أغلب مشغلات الفيديو)
             var origFetch = window.fetch;
             window.fetch = function() {
                 var args = arguments;
@@ -53,6 +54,50 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 args[1].headers['$TARGET_HEADER_KEY'] = '$TARGET_HEADER_VALUE';
                 return origFetch.apply(this, args);
             };
+
+            // ==========================================
+            // 2. كسر حماية الـ Debugger (محاكاة الزر الأزرق)
+            // ==========================================
+            
+            // أ. تعطيل عبر الـ Constructor (مع التمويه)
+            const _constructor = Function.prototype.constructor;
+            Function.prototype.constructor = function(...args) {
+                if (args.length > 0) {
+                    let lastArg = args[args.length - 1];
+                    if (typeof lastArg === 'string' && lastArg.includes('debugger')) {
+                        args[args.length - 1] = lastArg.replace(/debugger\s*;/g, '');
+                    }
+                }
+                return _constructor.apply(this, args);
+            };
+            // تمويه الدالة لتبدو وكأنها أصلية لم يتم المساس بها
+            Function.prototype.constructor.toString = function() { return "function Function() { [native code] }"; };
+
+            // ب. تعطيل عبر الـ eval (مع التمويه)
+            const _eval = window.eval;
+            window.eval = function(code) {
+                if (typeof code === 'string' && code.includes('debugger')) {
+                    code = code.replace(/debugger\s*;/g, '');
+                }
+                return _eval.apply(this, [code]);
+            };
+            // تمويه الدالة
+            window.eval.toString = function() { return "function eval() { [native code] }"; };
+
+            // ج. تعطيل عبر الـ setInterval (مع التمويه)
+            const _setInterval = window.setInterval;
+            window.setInterval = function(fn, time, ...args) {
+                if (typeof fn === 'string' && fn.includes('debugger')) {
+                    fn = fn.replace(/debugger\s*;/g, '');
+                }
+                return _setInterval.apply(window, [fn, time, ...args]);
+            };
+            // تمويه الدالة
+            window.setInterval.toString = function() { return "function setInterval() { [native code] }"; };
+            
+            // د. منع تفريغ الـ Console
+            console.clear = function() {};
+            console.clear.toString = function() { return "function clear() { [native code] }"; };
         })();
     """.trimIndent()
 
@@ -93,7 +138,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             if (input.startsWith("http://") || input.startsWith("https://")) input else "https://$input"
         } else { "https://www.google.com/search?q=${Uri.encode(input)}" }
         
-        // التحميل الأول للصفحة مع الهيدر
         webView.loadUrl(url, customHeaders)
     }
 
@@ -122,8 +166,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         s.useWideViewPort = true
         s.javaScriptCanOpenWindowsAutomatically = true
         s.setSupportMultipleWindows(true)
-        
-        // إعدادات إضافية لضمان عمل مشغلات الفيديو
         s.allowFileAccess = true
         s.allowContentAccess = true
         
@@ -135,15 +177,15 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 progressBar.visibility = View.VISIBLE
                 urlInput.setText(url)
                 
-                // ✨ زرع سكربت الهيدر فور بدء تحميل الصفحة
-                view?.evaluateJavascript(INJECT_HEADERS_SCRIPT, null)
+                // ✨ زرع السكربت الشبح فوراً
+                view?.evaluateJavascript(STEALTH_INJECTION_SCRIPT, null)
             }
             
             override fun onPageFinished(view: WebView?, url: String?) {
                 progressBar.visibility = View.GONE
                 
-                // ✨ زرع السكربت مرة أخرى لضمان عمله على مشغلات الفيديو التي تحمل متأخراً
-                view?.evaluateJavascript(INJECT_HEADERS_SCRIPT, null)
+                // ✨ زرعه مرة أخرى للتأكيد
+                view?.evaluateJavascript(STEALTH_INJECTION_SCRIPT, null)
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
@@ -151,7 +193,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 
                 if (url.startsWith("intent://") || url.startsWith("market://")) return true 
                 
-                // نقوم باعتراض الروابط وإضافة الهيدر والـ Referer لضمان عدم الطرد
                 val headersToApply = mutableMapOf<String, String>()
                 headersToApply.putAll(customHeaders)
                 
