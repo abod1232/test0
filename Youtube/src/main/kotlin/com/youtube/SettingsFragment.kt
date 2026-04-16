@@ -272,22 +272,64 @@ javascript:(function() {
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                val url = request?.url?.toString() ?: return false
-                
-                if (url.startsWith("intent://") || url.startsWith("market://")) return true 
-                
-                val headersToApply = mutableMapOf<String, String>()
-                headersToApply.putAll(customHeaders)
-                
-                val currentUrl = view?.url
-                if (!currentUrl.isNullOrEmpty()) {
-                    headersToApply["Referer"] = currentUrl
-                }
+    val url = request?.url?.toString() ?: return false
 
-                view?.loadUrl(url, headersToApply)
-                return true
-            }
+    // ✅ الدومين المسموح فقط
+    val allowedDomain = "rm.freex2line.online"
+
+    // ==========================================
+    // 1. منع الروابط الخطيرة
+    // ==========================================
+    if (
+        url.startsWith("intent://") ||
+        url.startsWith("market://") ||
+        url.startsWith("tel:") ||
+        url.startsWith("mailto:")
+    ) {
+        return true
+    }
+
+    // ==========================================
+    // 2. منع أي redirect خارج الموقع 🔥
+    // ==========================================
+    if (!url.contains(allowedDomain)) {
+        // ⛔ تجاهل أي تحويل خارجي
+        return true
+    }
+
+    // ==========================================
+    // 3. منع مواقع الإعلانات الشائعة
+    // ==========================================
+    val blockedKeywords = listOf(
+        "doubleclick",
+        "googlesyndication",
+        "adservice",
+        "popads",
+        "propellerads",
+        "adsterra",
+        "adskeeper"
+    )
+
+    for (keyword in blockedKeywords) {
+        if (url.contains(keyword)) {
+            return true
         }
+    }
+
+    // ==========================================
+    // 4. تحميل الصفحة مع الهيدرز
+    // ==========================================
+    val headersToApply = mutableMapOf<String, String>()
+    headersToApply.putAll(customHeaders)
+
+    val currentUrl = view?.url
+    if (!currentUrl.isNullOrEmpty()) {
+        headersToApply["Referer"] = currentUrl
+    }
+
+    view?.loadUrl(url, headersToApply)
+    return true
+}
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView, newProgress: Int) { progressBar.progress = newProgress }
