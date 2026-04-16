@@ -18,6 +18,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.FragmentManager
+import java.io.ByteArrayInputStream
 import java.util.Stack
 
 class YoutubeSettingsBottomSheet : DialogFragment() {
@@ -27,102 +28,9 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
     private val USER_AGENT = "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
 
-    private val TARGET_HEADER_KEY = "x-requested-with"
-    private val TARGET_HEADER_VALUE = "mark.via.gp"
-
     private val customHeaders = mapOf(
-        TARGET_HEADER_KEY to TARGET_HEADER_VALUE
+        "x-requested-with" to "mark.via.gp"
     )
-
-    // ✨ السكربت الشامل الخارق (النسخة النهائية - متوافق مع Cloudflare)
-    private val STEALTH_INJECTION_SCRIPT = """
-        javascript:(function() {
-            // 1. فرض الهيدرات للطلبات
-            var origOpen = XMLHttpRequest.prototype.open;
-            XMLHttpRequest.prototype.open = function() {
-                origOpen.apply(this, arguments);
-                this.setRequestHeader('$TARGET_HEADER_KEY', '$TARGET_HEADER_VALUE');
-            };
-            
-            var origFetch = window.fetch;
-            window.fetch = function() {
-                var args = arguments;
-                if(args[1] === undefined) { args[1] = {}; }
-                if(args[1].headers === undefined) { args[1].headers = {}; }
-                args[1].headers['$TARGET_HEADER_KEY'] = '$TARGET_HEADER_VALUE';
-                return origFetch.apply(this, args);
-            };
-
-            // 2. تدمير أي محاولة لعمل Breakpoint مهما كان تشفيرها
-            const cleanDebugger = (str) => {
-                if (typeof str !== 'string') return str;
-                return str.replace(/debugger\s*;/g, '')
-                          .replace(/debugger/g, '')
-                          // فحص التشفير بنظام Hex
-                          .replace(/\\x64\\x65\\x62\\x75\\x67\\x67\\x65\\x72/g, '')
-                          // فحص التشفير بنظام Unicode
-                          .replace(/\\u0064\\u0065\\u0062\\u0075\\u0067\\u0067\\u0065\\u0072/g, '');
-            };
-
-            // التلاعب بشكل آمن بدالة Function لكي لا نغضب Cloudflare
-            const origFunction = window.Function;
-            window.Function = function(...args) {
-                for (let i = 0; i < args.length; i++) {
-                    args[i] = cleanDebugger(args[i]);
-                }
-                return origFunction.apply(this, args);
-            };
-            window.Function.prototype = origFunction.prototype;
-            window.Function.toString = function() { return "function Function() { [native code] }"; };
-
-            const origEval = window.eval;
-            window.eval = function(...args) {
-                if (args.length > 0) args[0] = cleanDebugger(args[0]);
-                return origEval.apply(this, args);
-            };
-            window.eval.toString = function() { return "function eval() { [native code] }"; };
-
-            const origSetTimeout = window.setTimeout;
-            window.setTimeout = function(...args) {
-                if (typeof args[0] === 'string') args[0] = cleanDebugger(args[0]);
-                return origSetTimeout.apply(this, args);
-            };
-            window.setTimeout.toString = function() { return "function setTimeout() { [native code] }"; };
-
-            const origSetInterval = window.setInterval;
-            window.setInterval = function(...args) {
-                if (typeof args[0] === 'string') args[0] = cleanDebugger(args[0]);
-                return origSetInterval.apply(this, args);
-            };
-            window.setInterval.toString = function() { return "function setInterval() { [native code] }"; };
-
-            // 3. قاتل النوافذ المزعجة وحظر الإعلانات
-            setInterval(function() {
-                const elements = document.querySelectorAll('*');
-                for (let i = 0; i < elements.length; i++) {
-                    const el = elements[i];
-                    if (el.innerText && el.innerText.includes('إيقاف منع الإعلانات')) {
-                        let overlay = el;
-                        while (overlay.parentElement && overlay.parentElement !== document.body && overlay.parentElement !== document.documentElement) {
-                            overlay = overlay.parentElement;
-                        }
-                        if(overlay) overlay.remove();
-                    }
-                }
-
-                if (document.body && document.body.style.overflow === 'hidden') {
-                    document.body.style.setProperty('overflow', 'auto', 'important');
-                }
-                if (document.documentElement && document.documentElement.style.overflow === 'hidden') {
-                    document.documentElement.style.setProperty('overflow', 'auto', 'important');
-                }
-
-                window.adblock = false;
-                window.isAdBlockActive = false;
-            }, 500); 
-
-        })();
-    """.trimIndent()
 
     companion object {
         fun show(fm: FragmentManager) {
@@ -199,14 +107,10 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 progressBar.visibility = View.VISIBLE
                 urlInput.setText(url)
-                
-                view?.evaluateJavascript(STEALTH_INJECTION_SCRIPT, null)
             }
             
             override fun onPageFinished(view: WebView?, url: String?) {
                 progressBar.visibility = View.GONE
-                
-                view?.evaluateJavascript(STEALTH_INJECTION_SCRIPT, null)
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
@@ -224,6 +128,50 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
                 view?.loadUrl(url, headersToApply)
                 return true
+            }
+
+            // ✨ هنا يبدأ الحل المتقدم الجديد: اعتراض كل طلبات الموقع
+            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
+                
+                // 1. حظر سكربت كشف مانع الإعلانات
+                if (url.contains("zJSYdQ")) {
+                    // نرجع استجابة فارغة، كأن الملف لم يوجد أبداً
+                    return WebResourceResponse("text/plain", "UTF-8", null)
+                }
+
+                // 2. حظر أي سكربت آخر للإعلانات أو التتبع (قائمة حظر أساسية)
+                val blocklist = listOf("popads", "popcash", "propellerads", "adsterra")
+                if (blocklist.any { url.contains(it) }) {
+                    return WebResourceResponse("text/plain", "UTF-8", null)
+                }
+
+                // ✨ الأهم: حظر أي محاولة للتجميد باستخدام debugger
+                // بدلاً من حقن سكربت، نحن هنا نفلتر الكود الأصلي ونزيل منه أي خطر
+                if (url.endsWith(".js") && (url.contains("cimanow") || url.contains("freex2line"))) {
+                    try {
+                        val connection = java.net.URL(url).openConnection()
+                        val contentType = connection.contentType
+                        val encoding = connection.contentEncoding ?: "UTF-8"
+                        
+                        var originalJs = connection.inputStream.bufferedReader().readText()
+                        
+                        // إزالة أي محاولة debugger حتى لو كانت مخفية
+                        originalJs = originalJs.replace(Regex("debugger"), "")
+                        originalJs = originalJs.replace(Regex("\\\\x64\\\\x65\\\\x62\\\\x75\\\\x67\\\\x67\\\\x65\\\\x72"), "") // Hex
+                        
+                        // إزالة أي محاولة لإظهار الشاشة البنفسجية
+                        originalJs = originalJs.replace(Regex("إيقاف منع الإعلانات"), "")
+
+                        val inputStream = ByteArrayInputStream(originalJs.toByteArray(charset(encoding)))
+                        return WebResourceResponse(contentType, encoding, inputStream)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+
+                // لباقي الطلبات (الصور والفيديو)، اتركها تمر بشكل طبيعي
+                return super.shouldInterceptRequest(view, request)
             }
         }
 
