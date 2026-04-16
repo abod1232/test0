@@ -27,13 +27,13 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
     private val USER_AGENT = "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
 
-    // الهيدر الذي نريده للكل
     private val customHeaders = mapOf(
         "x-requested-with" to "mark.via.gp"
     )
 
-    // الرابط المستثنى
-    private val EXCLUDED_DOMAIN = "rm.freex2line.online"
+    // ✨ تم التعديل: الاستثناء الآن يخص هذا الرابط بالضبط وليس النطاق بالكامل
+    // قمنا بإزالة الشرطة المائلة (/) من النهاية لضمان التطابق حتى لو أضاف الموقع رموزاً إضافية للرابط
+    private val EXCLUDED_EXACT_URL = "https://rm.freex2line.online/2020/02/blog-post.html"
 
     companion object {
         fun show(fm: FragmentManager) {
@@ -72,11 +72,11 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             if (input.startsWith("http://") || input.startsWith("https://")) input else "https://$input"
         } else { "https://www.google.com/search?q=${Uri.encode(input)}" }
         
-        // تطبيق الاستثناء حتى عند الكتابة في شريط البحث
-        if (url.contains(EXCLUDED_DOMAIN)) {
-            webView.loadUrl(url) // بدون هيدرات
+        // ✨ التحقق من الرابط المستثنى عند الكتابة في شريط البحث
+        if (url.startsWith(EXCLUDED_EXACT_URL)) {
+            webView.loadUrl(url) // تحميل بدون هيدرات مخصصة
         } else {
-            webView.loadUrl(url, customHeaders) // مع الهيدرات
+            webView.loadUrl(url, customHeaders) // تحميل مع الهيدرات
         }
     }
 
@@ -122,19 +122,17 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return false
                 
-                // منع التطبيقات الخارجية
                 if (url.startsWith("intent://") || url.startsWith("market://")) return true 
                 
-                // ✨ الاستثناء: إذا كان الرابط هو الرابط المطلوب تخطيه
-                if (url.contains(EXCLUDED_DOMAIN)) {
-                    return false // نترك المتصفح يحمله بشكل طبيعي تماماً بدون تدخلنا
+                // ✨ الاستثناء الدقيق: إذا كان الرابط يبدأ بالمسار المحدد
+                if (url.startsWith(EXCLUDED_EXACT_URL)) {
+                    return false // المتصفح سيتعامل معه بشكل طبيعي 100% بدون هيدراتنا
                 }
 
-                // ✨ لكل الروابط الأخرى: نطبق الهيدر المخصص
+                // لأي رابط آخر، نقوم بإضافة الهيدرات
                 val headersToApply = mutableMapOf<String, String>()
                 headersToApply.putAll(customHeaders)
                 
-                // إضافة Referer كإجراء أمني إضافي لمنع مشاكل الـ Redirect
                 val currentUrl = view?.url
                 if (!currentUrl.isNullOrEmpty()) {
                     headersToApply["Referer"] = currentUrl
