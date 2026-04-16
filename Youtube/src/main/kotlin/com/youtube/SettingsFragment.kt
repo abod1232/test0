@@ -27,13 +27,34 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
     private val USER_AGENT = "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
 
+    private val TARGET_HEADER_KEY = "x-requested-with"
+    private val TARGET_HEADER_VALUE = "mark.via.gp"
+
     private val customHeaders = mapOf(
-        "x-requested-with" to "mark.via.gp"
+        TARGET_HEADER_KEY to TARGET_HEADER_VALUE
     )
 
-    // ✨ تم التعديل: الاستثناء الآن يخص هذا الرابط بالضبط وليس النطاق بالكامل
-    // قمنا بإزالة الشرطة المائلة (/) من النهاية لضمان التطابق حتى لو أضاف الموقع رموزاً إضافية للرابط
-    private val EXCLUDED_EXACT_URL = "https://rm.freex2line.online/2020/02/blog-post.html"
+    // ✨ هذا هو السكربت السحري الذي يجبر أي طلب في الموقع على حمل الهيدر الخاص بك
+    private val INJECT_HEADERS_SCRIPT = """
+        javascript:(function() {
+            // 1. إجبار طلبات XMLHttpRequest (القديمة والشائعة)
+            var origOpen = XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open = function() {
+                origOpen.apply(this, arguments);
+                this.setRequestHeader('$TARGET_HEADER_KEY', '$TARGET_HEADER_VALUE');
+            };
+            
+            // 2. إجبار طلبات Fetch API (الحديثة والتي تستخدمها أغلب مشغلات الفيديو)
+            var origFetch = window.fetch;
+            window.fetch = function() {
+                var args = arguments;
+                if(args[1] === undefined) { args[1] = {}; }
+                if(args[1].headers === undefined) { args[1].headers = {}; }
+                args[1].headers['$TARGET_HEADER_KEY'] = '$TARGET_HEADER_VALUE';
+                return origFetch.apply(this, args);
+            };
+        })();
+    """.trimIndent()
 
     companion object {
         fun show(fm: FragmentManager) {
@@ -72,12 +93,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             if (input.startsWith("http://") || input.startsWith("https://")) input else "https://$input"
         } else { "https://www.google.com/search?q=${Uri.encode(input)}" }
         
-        // ✨ التحقق من الرابط المستثنى عند الكتابة في شريط البحث
-        if (url.startsWith(EXCLUDED_EXACT_URL)) {
-            webView.loadUrl(url) // تحميل بدون هيدرات مخصصة
-        } else {
-            webView.loadUrl(url, customHeaders) // تحميل مع الهيدرات
-        }
+        // التحميل الأول للصفحة مع الهيدر
+        webView.loadUrl(url, customHeaders)
     }
 
     private fun handleBack() {
@@ -106,6 +123,10 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         s.javaScriptCanOpenWindowsAutomatically = true
         s.setSupportMultipleWindows(true)
         
+        // إعدادات إضافية لضمان عمل مشغلات الفيديو
+        s.allowFileAccess = true
+        s.allowContentAccess = true
+        
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
 
@@ -113,10 +134,16 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 progressBar.visibility = View.VISIBLE
                 urlInput.setText(url)
+                
+                // ✨ زرع سكربت الهيدر فور بدء تحميل الصفحة
+                view?.evaluateJavascript(INJECT_HEADERS_SCRIPT, null)
             }
             
             override fun onPageFinished(view: WebView?, url: String?) {
                 progressBar.visibility = View.GONE
+                
+                // ✨ زرع السكربت مرة أخرى لضمان عمله على مشغلات الفيديو التي تحمل متأخراً
+                view?.evaluateJavascript(INJECT_HEADERS_SCRIPT, null)
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
@@ -124,12 +151,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 
                 if (url.startsWith("intent://") || url.startsWith("market://")) return true 
                 
-                // ✨ الاستثناء الدقيق: إذا كان الرابط يبدأ بالمسار المحدد
-                if (url.startsWith(EXCLUDED_EXACT_URL)) {
-                    return false // المتصفح سيتعامل معه بشكل طبيعي 100% بدون هيدراتنا
-                }
-
-                // لأي رابط آخر، نقوم بإضافة الهيدرات
+                // نقوم باعتراض الروابط وإضافة الهيدر والـ Referer لضمان عدم الطرد
                 val headersToApply = mutableMapOf<String, String>()
                 headersToApply.putAll(customHeaders)
                 
