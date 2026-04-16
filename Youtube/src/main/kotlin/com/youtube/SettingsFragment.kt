@@ -25,9 +25,15 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     private lateinit var webContainer: FrameLayout
     private val webStack = Stack<WebView>()
 
-    // تم تحديث الـ User-Agent لإخفاء أي أثر للـ WebView
+    // User-Agent حديث ومستقر
     private val USER_AGENT = "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
 
+    // ✨ الهيدر المطلوب
+    private val TARGET_DOMAIN = "cimanow"
+    private val CUSTOM_HEADER_KEY = "x-requested-with"
+    private val CUSTOM_HEADER_VALUE = "mark.via.gp"
+
+    // سكربت تخطي حماية التوقف (Anti-Debugger)
     private val ANTI_DEBUGGER_SCRIPT = """
         javascript:(function() {
             const _constructor = Function.prototype.constructor;
@@ -84,8 +90,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         }
         backBtn.setOnClickListener { handleBack() }
         
-        // تحميل الصفحة الافتراضية
-        loadUrlSmart(mainWebView, "https://google.com")
+        loadUrlSmart(mainWebView, "https://cimanow.cc")
         return root
     }
     
@@ -95,9 +100,12 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             if (input.startsWith("http://") || input.startsWith("https://")) input else "https://$input"
         } else { "https://www.google.com/search?q=${Uri.encode(input)}" }
         
-        // ✨ نرسل الهيدر المخصص فقط عند البحث الأولي من الشريط العلوي
-        val initialHeaders = mapOf("x-requested-with" to "mark.via.gp")
-        webView.loadUrl(url, initialHeaders)
+        // عند الكتابة في شريط البحث، نرسل الهيدر دائماً إذا كان الموقع المستهدف
+        val headers = mutableMapOf<String, String>()
+        if (url.contains(TARGET_DOMAIN)) {
+            headers[CUSTOM_HEADER_KEY] = CUSTOM_HEADER_VALUE
+        }
+        webView.loadUrl(url, headers)
     }
 
     private fun handleBack() {
@@ -144,15 +152,27 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return false
                 
-                // منع التطبيقات الخارجية
-                if (url.startsWith("intent://") || url.startsWith("market://") || url.startsWith("whatsapp://")) {
-                    return true 
-                }
+                // منع فتح التطبيقات الخارجية
+                if (url.startsWith("intent://") || url.startsWith("market://")) return true 
                 
-                // ✨ السحر هنا: نرجع false
-                // هذا يخبر الـ WebView أن يتعامل مع الرابط بنفسه بشكل طبيعي
-                // سيقوم المتصفح تلقائياً بإرسال الـ Referer والـ Cookies الصحيحة
-                // ولن يكتشف الموقع أننا تطبيق معدل وسيعرض التصميم بشكل كامل
+                // ✨ الفحص الذكي: هل الرابط الجديد هو للموقع المطلوب؟ وهل هو الإطار الرئيسي (ليس إعلان أو iframe)؟
+                if (request != null && request.isForMainFrame && url.contains(TARGET_DOMAIN)) {
+                    
+                    val customHeaders = mutableMapOf<String, String>()
+                    customHeaders[CUSTOM_HEADER_KEY] = CUSTOM_HEADER_VALUE
+                    
+                    // ✨ إضافة الـ Referer بشكل يدوي لمنع الطرد من Cloudflare أو WAF
+                    val currentUrl = view?.url
+                    if (!currentUrl.isNullOrEmpty()) {
+                        customHeaders["Referer"] = currentUrl
+                    }
+
+                    // نحمل الرابط مع الهيدرات الخاصة بنا
+                    view?.loadUrl(url, customHeaders)
+                    return true // نخبر المتصفح أننا تعاملنا مع الرابط
+                }
+
+                // ✨ إذا كان أي موقع آخر، أو ملف داخلي، اتركه يفتح بشكل طبيعي 100%
                 return false
             }
         }
