@@ -34,157 +34,100 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         TARGET_HEADER_KEY to TARGET_HEADER_VALUE
     )
 
-    // ✨ السكربت الشامل الخارق: (1) الهيدرات (2) كسر الـ Debugger (3) قاتل مانع الإعلانات
+    // ✨ السكربت الشامل الخارق المُحدّث (محاكي زر إيقاف نقاط التوقف)
     private val STEALTH_INJECTION_SCRIPT = """
-javascript:(function() {
+        javascript:(function() {
+            // ==========================================
+            // 1. فرض الهيدرات على كل الطلبات المخفية
+            // ==========================================
+            var origOpen = XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open = function() {
+                origOpen.apply(this, arguments);
+                this.setRequestHeader('$TARGET_HEADER_KEY', '$TARGET_HEADER_VALUE');
+            };
+            
+            var origFetch = window.fetch;
+            window.fetch = function() {
+                var args = arguments;
+                if(args[1] === undefined) { args[1] = {}; }
+                if(args[1].headers === undefined) { args[1].headers = {}; }
+                args[1].headers['$TARGET_HEADER_KEY'] = '$TARGET_HEADER_VALUE';
+                return origFetch.apply(this, args);
+            };
 
-    // ==========================================
-    // 1. حقن الهيدر في كل الطلبات
-    // ==========================================
-    var origOpen = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function() {
-        origOpen.apply(this, arguments);
-        try { this.setRequestHeader('$TARGET_HEADER_KEY', '$TARGET_HEADER_VALUE'); } catch(e){}
-    };
-
-    var origFetch = window.fetch;
-    window.fetch = function() {
-        var args = arguments;
-        if (!args[1]) args[1] = {};
-        if (!args[1].headers) args[1].headers = {};
-        args[1].headers['$TARGET_HEADER_KEY'] = '$TARGET_HEADER_VALUE';
-        return origFetch.apply(this, args);
-    };
-
-    // ==========================================
-    // 2. تعطيل debugger بالكامل 🔥
-    // ==========================================
-
-    // قتل debugger المباشر
-    try {
-        Object.defineProperty(window, 'debugger', {
-            get: () => function(){},
-            set: () => {}
-        });
-    } catch(e){}
-
-    // تعطيل eval
-    const _eval = window.eval;
-    window.eval = function(code) {
-        if (typeof code === 'string') {
-            code = code.replace(/debugger\s*;/gi, '');
-        }
-        return _eval(code);
-    };
-
-    // تعطيل Function constructor
-    const _Function = Function;
-    Function = function(...args) {
-        if (args.length) {
-            let last = args[args.length - 1];
-            if (typeof last === 'string') {
-                last = last.replace(/debugger\s*;/gi, '');
-                args[args.length - 1] = last;
-            }
-        }
-        return _Function.apply(this, args);
-    };
-
-    // تعطيل setTimeout
-    const _setTimeout = window.setTimeout;
-    window.setTimeout = function(fn, t) {
-        if (typeof fn === 'string') {
-            fn = fn.replace(/debugger\s*;/gi, '');
-        }
-        return _setTimeout(fn, t);
-    };
-
-    // تعطيل setInterval
-    const _setInterval = window.setInterval;
-    window.setInterval = function(fn, t) {
-        if (typeof fn === 'string') {
-            fn = fn.replace(/debugger\s*;/gi, '');
-        }
-        return _setInterval(fn, t);
-    };
-
-    // ==========================================
-    // 3. كسر DevTools detection 🧠
-    // ==========================================
-
-    console.clear = function(){};
-    console.log = console.log.bind(console);
-    console.warn = function(){};
-    console.error = function(){};
-
-    // منع كشف DevTools عبر timing
-    const fakeNow = () => Date.now();
-    performance.now = fakeNow;
-
-    // منع كشف debugger عبر الفرق الزمني
-    setInterval(() => {
-        const start = Date.now();
-        debugger;
-        const end = Date.now();
-        if (end - start > 100) {
-            // تم اكتشاف debugger → تجاهله
-        }
-    }, 1000);
-
-    // ==========================================
-    // 4. Anti Anti-Adblock 💀
-    // ==========================================
-
-    setInterval(function() {
-
-        const elements = document.querySelectorAll('*');
-
-        for (let el of elements) {
-            if (!el.innerText) continue;
-
-            if (
-                el.innerText.includes('إيقاف منع الإعلانات') ||
-                el.innerText.toLowerCase().includes('adblock') ||
-                el.innerText.toLowerCase().includes('disable adblock')
-            ) {
-                let parent = el;
-                while (parent.parentElement &&
-                       parent.parentElement !== document.body &&
-                       parent.parentElement !== document.documentElement) {
-                    parent = parent.parentElement;
+            // ==========================================
+            // 2. الإلغاء الشامل لأي نقطة توقف (Breakpoints / Debugger)
+            // ==========================================
+            // هذه الدالة تمسح أي محاولة تجميد حتى لو كانت مخفية
+            const disableBreakpoints = (str) => {
+                if (typeof str === 'string') {
+                    return str.replace(/debugger\s*;/g, '').replace(/debugger/g, '');
                 }
-                if (parent) parent.remove();
-            }
-        }
+                return str;
+            };
 
-        // إعادة التمرير
-        if (document.body) {
-            document.body.style.setProperty('overflow', 'auto', 'important');
-        }
-        if (document.documentElement) {
-            document.documentElement.style.setProperty('overflow', 'auto', 'important');
-        }
+            const _constructor = Function.prototype.constructor;
+            Function.prototype.constructor = function(...args) {
+                if (args.length > 0) {
+                    args[args.length - 1] = disableBreakpoints(args[args.length - 1]);
+                }
+                return _constructor.apply(this, args);
+            };
+            Function.prototype.constructor.toString = function() { return "function Function() { [native code] }"; };
 
-        // خداع الموقع
-        window.adblock = false;
-        window.isAdBlockActive = false;
-        window.canRunAds = true;
+            const _eval = window.eval;
+            window.eval = function(code) {
+                return _eval.apply(this, [disableBreakpoints(code)]);
+            };
+            window.eval.toString = function() { return "function eval() { [native code] }"; };
 
-    }, 500);
+            const _setInterval = window.setInterval;
+            window.setInterval = function(fn, time, ...args) {
+                if (typeof fn === 'string') fn = disableBreakpoints(fn);
+                return _setInterval.apply(window, [fn, time, ...args]);
+            };
+            window.setInterval.toString = function() { return "function setInterval() { [native code] }"; };
 
-    // ==========================================
-    // 5. قتل loops الخطيرة (anti freeze)
-    // ==========================================
+            // ✨ تمت إضافة setTimeout لأن المواقع تستخدمه كثيراً لتجميد المتصفح
+            const _setTimeout = window.setTimeout;
+            window.setTimeout = function(fn, time, ...args) {
+                if (typeof fn === 'string') fn = disableBreakpoints(fn);
+                return _setTimeout.apply(window, [fn, time, ...args]);
+            };
+            window.setTimeout.toString = function() { return "function setTimeout() { [native code] }"; };
+            
+            console.clear = function() {};
+            console.clear.toString = function() { return "function clear() { [native code] }"; };
 
-    const _requestAnimationFrame = window.requestAnimationFrame;
-    window.requestAnimationFrame = function(cb) {
-        return _requestAnimationFrame(function() {
-            try { cb(); } catch(e){}
-        });
-    };
+            // ==========================================
+            // 3. قاتل رسالة "قم بإيقاف منع الإعلانات" (Anti-Anti-Adblock)
+            // ==========================================
+            setInterval(function() {
+                const elements = document.querySelectorAll('*');
+                for (let i = 0; i < elements.length; i++) {
+                    const el = elements[i];
+                    if (el.innerText && el.innerText.includes('إيقاف منع الإعلانات')) {
+                        let overlay = el;
+                        while (overlay.parentElement && overlay.parentElement !== document.body && overlay.parentElement !== document.documentElement) {
+                            overlay = overlay.parentElement;
+                        }
+                        if(overlay) overlay.remove();
+                    }
+                }
 
-})();
-""".trimIndent()
+                if (document.body && document.body.style.overflow === 'hidden') {
+                    document.body.style.setProperty('overflow', 'auto', 'important');
+                }
+                if (document.documentElement && document.documentElement.style.overflow === 'hidden') {
+                    document.documentElement.style.setProperty('overflow', 'auto', 'important');
+                }
+
+                window.adblock = false;
+                window.isAdBlockActive = false;
+            }, 500); 
+
+        })();
+    """.trimIndent()
 
     companion object {
         fun show(fm: FragmentManager) {
@@ -272,66 +215,24 @@ javascript:(function() {
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-    val url = request?.url?.toString() ?: return false
+                val url = request?.url?.toString() ?: return false
+                
+                if (url.startsWith("intent://") || url.startsWith("market://")) return true 
+                
+                val headersToApply = mutableMapOf<String, String>()
+                headersToApply.putAll(customHeaders)
+                
+                val currentUrl = view?.url
+                if (!currentUrl.isNullOrEmpty()) {
+                    headersToApply["Referer"] = currentUrl
+                }
 
-    // ✅ الدومين المسموح فقط
-    val allowedDomain = "rm.freex2line.online"
-
-    // ==========================================
-    // 1. منع الروابط الخطيرة
-    // ==========================================
-    if (
-        url.startsWith("intent://") ||
-        url.startsWith("market://") ||
-        url.startsWith("tel:") ||
-        url.startsWith("mailto:")
-    ) {
-        return true
-    }
-
-    // ==========================================
-    // 2. منع أي redirect خارج الموقع 🔥
-    // ==========================================
-    if (!url.contains(allowedDomain)) {
-        // ⛔ تجاهل أي تحويل خارجي
-        return true
-    }
-
-    // ==========================================
-    // 3. منع مواقع الإعلانات الشائعة
-    // ==========================================
-    val blockedKeywords = listOf(
-        "doubleclick",
-        "googlesyndication",
-        "adservice",
-        "popads",
-        "propellerads",
-        "adsterra",
-        "adskeeper"
-    )
-
-    for (keyword in blockedKeywords) {
-        if (url.contains(keyword)) {
-            return true
+                view?.loadUrl(url, headersToApply)
+                return true
+            }
         }
-    }
 
-    // ==========================================
-    // 4. تحميل الصفحة مع الهيدرز
-    // ==========================================
-    val headersToApply = mutableMapOf<String, String>()
-    headersToApply.putAll(customHeaders)
-
-    val currentUrl = view?.url
-    if (!currentUrl.isNullOrEmpty()) {
-        headersToApply["Referer"] = currentUrl
-    }
-
-    view?.loadUrl(url, headersToApply)
-    return true
-}
-
-    
+        webView.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView, newProgress: Int) { progressBar.progress = newProgress }
             override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message): Boolean {
                 val newWebView = createWebView(context, progressBar, urlInput)
