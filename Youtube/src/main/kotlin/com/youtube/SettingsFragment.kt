@@ -34,12 +34,10 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         TARGET_HEADER_KEY to TARGET_HEADER_VALUE
     )
 
-    // ✨ السكربت الشامل الخارق المُحدّث (محاكي زر إيقاف نقاط التوقف)
+    // ✨ السكربت الشامل الخارق (النسخة النهائية - متوافق مع Cloudflare)
     private val STEALTH_INJECTION_SCRIPT = """
         javascript:(function() {
-            // ==========================================
-            // 1. فرض الهيدرات على كل الطلبات المخفية
-            // ==========================================
+            // 1. فرض الهيدرات للطلبات
             var origOpen = XMLHttpRequest.prototype.open;
             XMLHttpRequest.prototype.open = function() {
                 origOpen.apply(this, arguments);
@@ -55,53 +53,50 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 return origFetch.apply(this, args);
             };
 
-            // ==========================================
-            // 2. الإلغاء الشامل لأي نقطة توقف (Breakpoints / Debugger)
-            // ==========================================
-            // هذه الدالة تمسح أي محاولة تجميد حتى لو كانت مخفية
-            const disableBreakpoints = (str) => {
-                if (typeof str === 'string') {
-                    return str.replace(/debugger\s*;/g, '').replace(/debugger/g, '');
-                }
-                return str;
+            // 2. تدمير أي محاولة لعمل Breakpoint مهما كان تشفيرها
+            const cleanDebugger = (str) => {
+                if (typeof str !== 'string') return str;
+                return str.replace(/debugger\s*;/g, '')
+                          .replace(/debugger/g, '')
+                          // فحص التشفير بنظام Hex
+                          .replace(/\\x64\\x65\\x62\\x75\\x67\\x67\\x65\\x72/g, '')
+                          // فحص التشفير بنظام Unicode
+                          .replace(/\\u0064\\u0065\\u0062\\u0075\\u0067\\u0067\\u0065\\u0072/g, '');
             };
 
-            const _constructor = Function.prototype.constructor;
-            Function.prototype.constructor = function(...args) {
-                if (args.length > 0) {
-                    args[args.length - 1] = disableBreakpoints(args[args.length - 1]);
+            // التلاعب بشكل آمن بدالة Function لكي لا نغضب Cloudflare
+            const origFunction = window.Function;
+            window.Function = function(...args) {
+                for (let i = 0; i < args.length; i++) {
+                    args[i] = cleanDebugger(args[i]);
                 }
-                return _constructor.apply(this, args);
+                return origFunction.apply(this, args);
             };
-            Function.prototype.constructor.toString = function() { return "function Function() { [native code] }"; };
+            window.Function.prototype = origFunction.prototype;
+            window.Function.toString = function() { return "function Function() { [native code] }"; };
 
-            const _eval = window.eval;
-            window.eval = function(code) {
-                return _eval.apply(this, [disableBreakpoints(code)]);
+            const origEval = window.eval;
+            window.eval = function(...args) {
+                if (args.length > 0) args[0] = cleanDebugger(args[0]);
+                return origEval.apply(this, args);
             };
             window.eval.toString = function() { return "function eval() { [native code] }"; };
 
-            const _setInterval = window.setInterval;
-            window.setInterval = function(fn, time, ...args) {
-                if (typeof fn === 'string') fn = disableBreakpoints(fn);
-                return _setInterval.apply(window, [fn, time, ...args]);
+            const origSetTimeout = window.setTimeout;
+            window.setTimeout = function(...args) {
+                if (typeof args[0] === 'string') args[0] = cleanDebugger(args[0]);
+                return origSetTimeout.apply(this, args);
+            };
+            window.setTimeout.toString = function() { return "function setTimeout() { [native code] }"; };
+
+            const origSetInterval = window.setInterval;
+            window.setInterval = function(...args) {
+                if (typeof args[0] === 'string') args[0] = cleanDebugger(args[0]);
+                return origSetInterval.apply(this, args);
             };
             window.setInterval.toString = function() { return "function setInterval() { [native code] }"; };
 
-            // ✨ تمت إضافة setTimeout لأن المواقع تستخدمه كثيراً لتجميد المتصفح
-            const _setTimeout = window.setTimeout;
-            window.setTimeout = function(fn, time, ...args) {
-                if (typeof fn === 'string') fn = disableBreakpoints(fn);
-                return _setTimeout.apply(window, [fn, time, ...args]);
-            };
-            window.setTimeout.toString = function() { return "function setTimeout() { [native code] }"; };
-            
-            console.clear = function() {};
-            console.clear.toString = function() { return "function clear() { [native code] }"; };
-
-            // ==========================================
-            // 3. قاتل رسالة "قم بإيقاف منع الإعلانات" (Anti-Anti-Adblock)
-            // ==========================================
+            // 3. قاتل النوافذ المزعجة وحظر الإعلانات
             setInterval(function() {
                 const elements = document.querySelectorAll('*');
                 for (let i = 0; i < elements.length; i++) {
