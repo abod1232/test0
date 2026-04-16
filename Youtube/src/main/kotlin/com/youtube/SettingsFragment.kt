@@ -3,10 +3,8 @@ package com.youtube
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
-import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
-import android.util.Log // استيراد مكتبة التسجيل
 import android.util.Patterns
 import android.view.Gravity
 import android.view.View
@@ -85,10 +83,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun createWebView(context: Context, progressBar: ProgressBar, urlInput: EditText): WebView {
         val webView = WebView(context)
-        
-        // تفعيل الـ Debugging للـ WebView (ضروري لأدوات مثل Chrome DevTools و reqable)
-        WebView.setWebContentsDebuggingEnabled(true)
-        
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         val s = webView.settings
         
@@ -110,7 +104,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
 
         webView.webViewClient = object : WebViewClient() {
-            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 progressBar.visibility = View.VISIBLE
                 urlInput.setText(url)
             }
@@ -136,24 +130,24 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 return true
             }
 
+            // ✨ هنا يبدأ الحل المتقدم الجديد: اعتراض كل طلبات الموقع
             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                 val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
                 
-                // هنا يتم طباعة أي رابط يحتوي على "get-link"
-                if (url.contains("get-link")) {
-                    Log.d("WebViewInterceptor", "Found get-link URL: $url")
-                }
-
-                // الكود السابق لحظر الحمايات
+                // 1. حظر سكربت كشف مانع الإعلانات
                 if (url.contains("zJSYdQ")) {
+                    // نرجع استجابة فارغة، كأن الملف لم يوجد أبداً
                     return WebResourceResponse("text/plain", "UTF-8", null)
                 }
 
+                // 2. حظر أي سكربت آخر للإعلانات أو التتبع (قائمة حظر أساسية)
                 val blocklist = listOf("popads", "popcash", "propellerads", "adsterra")
                 if (blocklist.any { url.contains(it) }) {
                     return WebResourceResponse("text/plain", "UTF-8", null)
                 }
 
+                // ✨ الأهم: حظر أي محاولة للتجميد باستخدام debugger
+                // بدلاً من حقن سكربت، نحن هنا نفلتر الكود الأصلي ونزيل منه أي خطر
                 if (url.endsWith(".js") && (url.contains("cimanow") || url.contains("freex2line"))) {
                     try {
                         val connection = java.net.URL(url).openConnection()
@@ -162,8 +156,11 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                         
                         var originalJs = connection.inputStream.bufferedReader().readText()
                         
+                        // إزالة أي محاولة debugger حتى لو كانت مخفية
                         originalJs = originalJs.replace(Regex("debugger"), "")
-                        originalJs = originalJs.replace(Regex("\\\\x64\\\\x65\\\\x62\\\\x75\\\\x67\\\\x67\\\\x65\\\\x72"), "") 
+                        originalJs = originalJs.replace(Regex("\\\\x64\\\\x65\\\\x62\\\\x75\\\\x67\\\\x67\\\\x65\\\\x72"), "") // Hex
+                        
+                        // إزالة أي محاولة لإظهار الشاشة البنفسجية
                         originalJs = originalJs.replace(Regex("إيقاف منع الإعلانات"), "")
 
                         val inputStream = ByteArrayInputStream(originalJs.toByteArray(charset(encoding)))
@@ -173,16 +170,13 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                     }
                 }
 
+                // لباقي الطلبات (الصور والفيديو)، اتركها تمر بشكل طبيعي
                 return super.shouldInterceptRequest(view, request)
             }
         }
 
-        // --- هذا هو الجزء الذي كان مختصراً ---
         webView.webChromeClient = object : WebChromeClient() {
-            override fun onProgressChanged(view: WebView, newProgress: Int) {
-                progressBar.progress = newProgress
-            }
-            
+            override fun onProgressChanged(view: WebView, newProgress: Int) { progressBar.progress = newProgress }
             override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message): Boolean {
                 val newWebView = createWebView(context, progressBar, urlInput)
                 webStack.push(newWebView)
@@ -196,12 +190,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
         return webView
     }
 
-    // --- وهذا هو الجزء الثاني الذي كان مختصراً ---
     override fun onStart() {
         super.onStart()
-        dialog?.window?.setLayout(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        )
+        dialog?.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
     }
 }
