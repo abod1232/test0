@@ -331,7 +331,7 @@ javascript:(function() {
     return true
 }
 
-        webView.webChromeClient = object : WebChromeClient() {
+    
             override fun onProgressChanged(view: WebView, newProgress: Int) { progressBar.progress = newProgress }
             override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message): Boolean {
                 val newWebView = createWebView(context, progressBar, urlInput)
