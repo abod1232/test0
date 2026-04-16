@@ -20,18 +20,15 @@ import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.FragmentManager
 import java.util.Stack
 
-// اسم الكلاس يجب أن يطابق اسم ملفك، مثلاً SettingsFragment
 class YoutubeSettingsBottomSheet : DialogFragment() {
 
     private lateinit var webContainer: FrameLayout
     private val webStack = Stack<WebView>()
 
-    // ✨ User-Agent جديد ومحدث لهاتف سامسونج شائع
-    private val USER_AGENT =
-        "Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36"
+    private val USER_AGENT = "Mozilla/5.0 (Linux; Android 13; SM-A536B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36"
 
-    private val headers = mapOf(
-        "User-Agent" to USER_AGENT,
+    // ✨ فقط الهيدر الاستثنائي الذي نريده
+    private val baseCustomHeaders = mapOf(
         "x-requested-with" to "mark.via.gp"
     )
 
@@ -44,82 +41,39 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreateView(inflater: android.view.LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val ctx = requireContext()
-        val root = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.BLACK)
-        }
-
-        val topBar = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(10, 10, 10, 10)
-            setBackgroundColor(Color.DKGRAY)
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
-        val urlInput = EditText(ctx).apply {
-            hint = "أدخل الرابط..."
-            setTextColor(Color.WHITE)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            isSingleLine = true
-            imeOptions = EditorInfo.IME_ACTION_GO
-        }
-        
+        val root = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.BLACK) }
+        val topBar = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; setPadding(10, 10, 10, 10); setBackgroundColor(Color.DKGRAY); gravity = Gravity.CENTER_VERTICAL }
+        val urlInput = EditText(ctx).apply { hint = "أدخل الرابط..."; setTextColor(Color.WHITE); layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f); isSingleLine = true; imeOptions = EditorInfo.IME_ACTION_GO }
         val backBtn = Button(ctx).apply { text = "رجوع" }
-
-        topBar.addView(urlInput)
-        topBar.addView(backBtn)
-        
-        val progressBar = ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal).apply {
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 8)
-            max = 100
-            progress = 0
-            visibility = View.GONE
-        }
-
-        webContainer = FrameLayout(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
-        }
-
+        topBar.addView(urlInput); topBar.addView(backBtn)
+        val progressBar = ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal).apply { layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 8); max = 100; progress = 0; visibility = View.GONE }
+        webContainer = FrameLayout(ctx).apply { layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f) }
         val mainWebView = createWebView(ctx, progressBar, urlInput)
         webStack.push(mainWebView)
         webContainer.addView(mainWebView)
-
-        root.addView(topBar)
-        root.addView(progressBar)
-        root.addView(webContainer)
+        root.addView(topBar); root.addView(progressBar); root.addView(webContainer)
 
         urlInput.setOnEditorActionListener { v, actionId, _ ->
-            if (actionId == EditorInfo.IME_ACTION_GO) {
-                loadUrlSmart(webStack.peek(), v.text.toString())
-                true
-            } else {
-                false
-            }
+            if (actionId == EditorInfo.IME_ACTION_GO) { loadUrlSmart(webStack.peek(), v.text.toString()); true } else false
         }
-
         backBtn.setOnClickListener { handleBack() }
-        
         loadUrlSmart(mainWebView, "https://google.com")
-
         return root
     }
     
     private fun loadUrlSmart(webView: WebView, input: String) {
         if (input.isBlank()) return
-        
         val url = if (Patterns.WEB_URL.matcher(input).matches()) {
             if (input.startsWith("http://") || input.startsWith("https://")) input else "https://$input"
-        } else {
-            "https://www.google.com/search?q=${Uri.encode(input)}"
-        }
-        webView.loadUrl(url, headers)
+        } else { "https://www.google.com/search?q=${Uri.encode(input)}" }
+        
+        // التحميل الأولي من شريط البحث لا يحتاج Referer
+        webView.loadUrl(url, baseCustomHeaders)
     }
 
     private fun handleBack() {
         if (webStack.size > 1) {
-            val top = webStack.pop()
-            webContainer.removeView(top)
-            top.destroy()
+            val top = webStack.pop(); webContainer.removeView(top); top.destroy()
         } else if (webStack.peek().canGoBack()) {
             webStack.peek().goBack()
         }
@@ -128,26 +82,26 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun createWebView(context: Context, progressBar: ProgressBar, urlInput: EditText): WebView {
         val webView = WebView(context)
-        
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-
         val s = webView.settings
         
-        // --- هذه الإعدادات ضرورية لعمل المواقع الحديثة ---
         s.javaScriptEnabled = true
-        s.domStorageEnabled = true // مهم جداً للمواقع التي تستخدم localStorage
+        s.domStorageEnabled = true
         s.databaseEnabled = true
-        s.javaScriptCanOpenWindowsAutomatically = true
-        s.setSupportMultipleWindows(true)
-        s.userAgentString = USER_AGENT
-        s.mediaPlaybackRequiresUserGesture = false
-        s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW // مهم للسماح بتحميل محتوى http و https معاً
-        s.allowFileAccess = true
-        s.loadsImagesAutomatically = true
-        s.useWideViewPort = true
-        s.loadWithOverviewMode = true
         s.cacheMode = WebSettings.LOAD_DEFAULT
 
+        // ✨ الـ User Agent يوضع هنا ليتم إرساله مع كل شيء تلقائياً (صور، سكربتات، الخ)
+        s.userAgentString = USER_AGENT
+        
+        s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        s.mediaPlaybackRequiresUserGesture = false
+        s.loadWithOverviewMode = true
+        s.useWideViewPort = true
+        s.javaScriptCanOpenWindowsAutomatically = true
+        s.setSupportMultipleWindows(true)
+        s.allowFileAccess = true
+        s.allowContentAccess = true
+        
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
 
@@ -162,25 +116,25 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                val url = request?.url?.toString()
-                if (url != null) {
-                    if (url.startsWith("intent://") || url.startsWith("market://")) return true
-                    view?.loadUrl(url, headers)
-                    return true
+                val url = request?.url?.toString() ?: return false
+                if (url.startsWith("intent://") || url.startsWith("market://")) return true
+                
+                // ✨ هنا السحر: نقوم بتوليد Referer تلقائي بناءً على الصفحة الحالية
+                val dynamicHeaders = mutableMapOf<String, String>()
+                dynamicHeaders.putAll(baseCustomHeaders)
+                
+                val currentUrl = view?.url
+                if (!currentUrl.isNullOrEmpty()) {
+                    dynamicHeaders["Referer"] = currentUrl
                 }
-                return false
-            }
 
-            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                super.onReceivedError(view, request, error)
+                view?.loadUrl(url, dynamicHeaders)
+                return true
             }
         }
 
         webView.webChromeClient = object : WebChromeClient() {
-            override fun onProgressChanged(view: WebView, newProgress: Int) {
-                progressBar.progress = newProgress
-            }
-            
+            override fun onProgressChanged(view: WebView, newProgress: Int) { progressBar.progress = newProgress }
             override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message): Boolean {
                 val newWebView = createWebView(context, progressBar, urlInput)
                 webStack.push(newWebView)
@@ -191,7 +145,6 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 return true
             }
         }
-        
         return webView
     }
 
