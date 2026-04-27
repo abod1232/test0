@@ -1,4 +1,18 @@
 [
+        {
+        "fileHash": "sha256-ce0d06c0643274bfa51ed041280c5d5360e5805305ed9fe4034acc07ab057d2a",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/abod1232/test0",
+        "fileSize": 46143,
+        "status": 3,
+        "authors": [
+            
+        ],
+        "version": -1,
+        "internalName": "CimaNowProvider",
+        "url": "https://github.com/abod1232/test0/raw/refs/heads/builds/CimaNowProvider.cs3",
+        "name": "CimaNowProvider"
+    },
     {
         "fileHash": "sha256-ce0d06c0643274bfa51ed041280c5d5360e5805305ed9fe4034acc07ab057d2a",
         "apiVersion": 1,
