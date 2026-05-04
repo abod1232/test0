@@ -56,10 +56,6 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
 
 
 
-
-
-
-
 private fun decodeHtml(doc: Document): Document {
     val TAG = "CimaNowDecoder"
     Log.i(TAG, "⚡ بدء فك التشفير السريع (متوافق مع API 21+)...")
