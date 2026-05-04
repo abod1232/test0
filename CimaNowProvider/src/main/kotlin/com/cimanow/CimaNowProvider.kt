@@ -58,84 +58,86 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
 
 
 
-    private fun decodeHtml(doc: Document): Document {
-        val TAG = "CimaNowDecoder"
-        Log.i(TAG, "⚡ بدء فك التشفير السريع (متوافق مع API 21+)...")
 
-        val rawHtml = doc.outerHtml()
 
-        // 1️⃣ استخراج مفتاح فك التشفير (_r) بسرعة
-        val keyMatch = Regex("""var\s+_r\s*=\s*(\d+)""").find(rawHtml)
-        if (keyMatch == null) {
-            Log.e(TAG, "❌ لم يتم العثور على مفتاح فك التشفير (_r)")
-            return doc
-        }
-        val dynamicKey = keyMatch.groupValues[1].toInt()
+private fun decodeHtml(doc: Document): Document {
+    val TAG = "CimaNowDecoder"
+    Log.i(TAG, "⚡ بدء فك التشفير السريع (متوافق مع API 21+)...")
 
-        // 2️⃣ استخراج النص المشفر بضربة واحدة باستخدام Jsoup
-        // هذا أسرع بكثير من عمل Regex على كامل الصفحة
-        val scriptWithData = doc.select("script").find { it.data().contains("~") }?.data()
+    val rawHtml = doc.outerHtml()
 
-        if (scriptWithData.isNullOrBlank()) {
-            Log.w(TAG, "⚠️ لم يتم العثور على كود السيرفرات المشفر.")
-            return doc
-        }
-
-        // 3️⃣ تنظيف النص بسرعة فائقة باستخدام الدوال الأساسية
-        val cleanData = scriptWithData
-            .substringAfter("=")
-            .substringBefore(";")
-            .replace("'", "")
-            .replace("+", "")
-            .replace("\n", "")
-            .replace("\r", "")
-            .replace(" ", "")
-
-        val parts = cleanData.split("~")
-
-        // 4️⃣ تجهيز الذاكرة مسبقاً (السر الحقيقي للسرعة)
-        val outputBytes = ByteArray(parts.size)
-        var writeIndex = 0
-
-        // 5️⃣ الحلقة السريعة باستخدام Base64 الخاص بأندرويد
-        for (part in parts) {
-            if (part.length < 2) continue
-
-            try {
-                // نستخدم Base64.DEFAULT وهو متوافق مع كل إصدارات الأندرويد
-                // كما أنه يعالج مشاكل الـ Padding تلقائياً
-                val decodedBytes = Base64.decode(part, Base64.DEFAULT)
-
-                // استخراج الأرقام
-                var num = 0
-                for (b in decodedBytes) {
-                    if (b in 48..57) { // 48='0', 57='9'
-                        num = num * 10 + (b - 48)
-                    }
-                }
-
-                // حفظ البايت في الذاكرة
-                if (num > 0) {
-                    outputBytes[writeIndex++] = (num - dynamicKey).toByte()
-                }
-            } catch (e: IllegalArgumentException) {
-                // في حالة كان النص غير صالح، نتخطاه بسرعة بدون انهيار
-                continue
-            }
-        }
-
-        // 6️⃣ تحويل البايتات إلى HTML مقروء دفعة واحدة
-        val decodedHtmlString = String(outputBytes, 0, writeIndex, Charsets.UTF_8)
-
-        if (decodedHtmlString.isBlank()) {
-            Log.e(TAG, "❌ فشل فك التشفير.")
-            return doc
-        }
-
-        Log.i(TAG, "✅ تم فك تشفير ${writeIndex} حرف في جزء من الثانية!")
-
-        return Jsoup.parse(decodedHtmlString)
+    // 1️⃣ استخراج مفتاح فك التشفير (_r) بسرعة
+    val keyMatch = Regex("""var\s+_r\s*=\s*(\d+)""").find(rawHtml)
+    if (keyMatch == null) {
+        Log.e(TAG, "❌ لم يتم العثور على مفتاح فك التشفير (_r)")
+        return doc
     }
+    val dynamicKey = keyMatch.groupValues[1].toInt()
+
+    // 2️⃣ استخراج النص المشفر بضربة واحدة باستخدام Jsoup
+    // هذا أسرع بكثير من عمل Regex على كامل الصفحة
+    val scriptWithData = doc.select("script").find { it.data().contains("~") }?.data()
+    
+    if (scriptWithData.isNullOrBlank()) {
+        Log.w(TAG, "⚠️ لم يتم العثور على كود السيرفرات المشفر.")
+        return doc
+    }
+
+    // 3️⃣ تنظيف النص بسرعة فائقة باستخدام الدوال الأساسية
+    val cleanData = scriptWithData
+        .substringAfter("=")
+        .substringBefore(";")
+        .replace("'", "")
+        .replace("+", "")
+        .replace("\n", "")
+        .replace("\r", "")
+        .replace(" ", "")
+
+    val parts = cleanData.split("~")
+
+    // 4️⃣ تجهيز الذاكرة مسبقاً (السر الحقيقي للسرعة)
+    val outputBytes = ByteArray(parts.size)
+    var writeIndex = 0
+
+    // 5️⃣ الحلقة السريعة باستخدام Base64 الخاص بأندرويد
+    for (part in parts) {
+        if (part.length < 2) continue
+
+        try {
+            // نستخدم Base64.DEFAULT وهو متوافق مع كل إصدارات الأندرويد
+            // كما أنه يعالج مشاكل الـ Padding تلقائياً
+            val decodedBytes = Base64.decode(part, Base64.DEFAULT)
+
+            // استخراج الأرقام
+            var num = 0
+            for (b in decodedBytes) {
+                if (b in 48..57) { // 48='0', 57='9'
+                    num = num * 10 + (b - 48)
+                }
+            }
+
+            // حفظ البايت في الذاكرة
+            if (num > 0) {
+                outputBytes[writeIndex++] = (num - dynamicKey).toByte()
+            }
+        } catch (e: IllegalArgumentException) {
+            // في حالة كان النص غير صالح، نتخطاه بسرعة بدون انهيار
+            continue
+        }
+    }
+
+    // 6️⃣ تحويل البايتات إلى HTML مقروء دفعة واحدة
+    val decodedHtmlString = String(outputBytes, 0, writeIndex, Charsets.UTF_8)
+
+    if (decodedHtmlString.isBlank()) {
+        Log.e(TAG, "❌ فشل فك التشفير.")
+        return doc
+    }
+
+    Log.i(TAG, "✅ تم فك تشفير ${writeIndex} حرف في جزء من الثانية!")
+    
+    return Jsoup.parse(decodedHtmlString)
+}
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = "${request.data}$page/"
