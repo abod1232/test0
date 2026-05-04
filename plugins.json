@@ -1,18 +1,24 @@
 [
-    {
-        "fileHash": "sha256-8619cb729739aa39b087b9380d283ce8018334c559d13507cce5d46e4b9ba55f",
-        "apiVersion": 1,
-        "repositoryUrl": "https://github.com/abod1232/test0",
-        "fileSize": 38002,
-        "status": 3,
-        "authors": [
-            
-        ],
-        "version": -1,
-        "internalName": "CimaNowProvider",
-        "url": "https://raw.githubusercontent.com/abod1232/test0/builds/CimaNowProvider.cs3",
-        "name": "CimaNowProvider"
-    },
+{
+    "iconUrl": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ03aoQBNDy_Hkm5MUGGvluPvK7To7BdGiSnzQn7WJ3fQ&s=10",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/Abodabodd/Testmyrepo",
+    "fileSize": 4900,
+    "status": 1,
+    "language": "ar",
+    "authors": [
+      "Abodabodd"
+    ],
+    "tvTypes": [
+      "TvSeries",
+      "Anime",
+      "Movie"
+    ],
+    "version": 1,
+    "internalName": "CimaNowProvider",
+    "url": "https://github.com/abod1232/test0/raw/refs/heads/builds/CimaNowProvider.cs3",
+    "name": "CimaNowProvider"
+  },
     {
         "fileHash": "sha256-ce0d06c0643274bfa51ed041280c5d5360e5805305ed9fe4034acc07ab057d2a",
         "apiVersion": 1,
