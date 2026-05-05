@@ -23,8 +23,11 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import java.net.URLEncoder
 
+import java.io.ByteArrayOutputStream
+import kotlin.ranges.contains
+
 class CimaNowProvider(private val context: Context) : MainAPI() {
-    override var name = "Cimanow5"
+    override var name = "Cimanow"
     override var mainUrl = "https://cimanow.cc"
     override var lang = "ar"
     override val hasMainPage = true
@@ -54,86 +57,94 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
     )
 
 
+    private fun decodeHtml(doc: Document): Document {
+        val TAG = "CimaNowDecoder (Test)"
 
+        val rawHtml = doc.outerHtml()
 
-private fun decodeHtml(doc: Document): Document {
-    val TAG = "CimaNowDecoder"
-    Log.i(TAG, "⚡ بدء فك التشفير السريع (متوافق مع API 21+)...")
+        val keyMatcher = Pattern.compile("""var\s+_r\s*=\s*(\d+)""").matcher(rawHtml)
+        if (!keyMatcher.find()) {
+            return doc
+        }
+        val dynamicKey = keyMatcher.group(1).toLong()
 
-    val rawHtml = doc.outerHtml()
+        val dataMatcher = Pattern.compile("""['"]([A-Za-z0-9+/=~]{20,})['"]""").matcher(rawHtml)
+        val extractedData = StringBuilder(100000) // حجز مساحة مسبقة لتجنب تمدد الذاكرة
+        while (dataMatcher.find()) {
+            extractedData.append(dataMatcher.group(1))
+        }
 
-    // 1️⃣ استخراج مفتاح فك التشفير (_r) بسرعة
-    val keyMatch = Regex("""var\s+_r\s*=\s*(\d+)""").find(rawHtml)
-    if (keyMatch == null) {
-        Log.e(TAG, "❌ لم يتم العثور على مفتاح فك التشفير (_r)")
-        return doc
+        if (extractedData.isEmpty()) {
+            return doc
+        }
+
+        val outputStream = ByteArrayOutputStream(extractedData.length / 4)
+        val decoder = java.util.Base64.getDecoder()
+        var successCount = 0
+
+        val chunk = StringBuilder(64)
+        val len = extractedData.length
+
+        for (i in 0 until len) {
+            val c = extractedData[i]
+
+            if (c == '~') {
+                if (chunk.isNotEmpty()) {
+                    successCount += decodeAndWriteFast(chunk, decoder, dynamicKey, outputStream)
+                    chunk.setLength(0)
+                }
+            }
+            else if ((c in 'A'..'Z') || (c in 'a'..'z') || (c in '0'..'9') || c == '+' || c == '/' || c == '=') {
+                chunk.append(c)
+            }
+        }
+
+        if (chunk.isNotEmpty()) {
+            successCount += decodeAndWriteFast(chunk, decoder, dynamicKey, outputStream)
+        }
+
+        // 4️⃣ تحويل البايتات إلى نص HTML
+        val decodedHtmlString = outputStream.toString("UTF-8")
+        Log.i(TAG, "✅ تم فك تشفير $decodedHtmlString ")
+
+        if (decodedHtmlString.isBlank()) {
+            println("$TAG: ❌ فشل فك التشفير: النتيجة فارغة تماماً.")
+            return doc
+        }
+        return Jsoup.parse(decodedHtmlString)
     }
-    val dynamicKey = keyMatch.groupValues[1].toInt()
 
-    // 2️⃣ استخراج النص المشفر بضربة واحدة باستخدام Jsoup
-    // هذا أسرع بكثير من عمل Regex على كامل الصفحة
-    val scriptWithData = doc.select("script").find { it.data().contains("~") }?.data()
-    
-    if (scriptWithData.isNullOrBlank()) {
-        Log.w(TAG, "⚠️ لم يتم العثور على كود السيرفرات المشفر.")
-        return doc
-    }
-
-    // 3️⃣ تنظيف النص بسرعة فائقة باستخدام الدوال الأساسية
-    val cleanData = scriptWithData
-        .substringAfter("=")
-        .substringBefore(";")
-        .replace("'", "")
-        .replace("+", "")
-        .replace("\n", "")
-        .replace("\r", "")
-        .replace(" ", "")
-
-    val parts = cleanData.split("~")
-
-    // 4️⃣ تجهيز الذاكرة مسبقاً (السر الحقيقي للسرعة)
-    val outputBytes = ByteArray(parts.size)
-    var writeIndex = 0
-
-    // 5️⃣ الحلقة السريعة باستخدام Base64 الخاص بأندرويد
-    for (part in parts) {
-        if (part.length < 2) continue
+    // دالة مساعدة صغيرة وسريعة لفك تشفير كل جزء
+    private fun decodeAndWriteFast(
+        chunk: StringBuilder,
+        decoder: java.util.Base64.Decoder,
+        key: Long,
+        out: ByteArrayOutputStream
+    ): Int {
+        // إصلاح سريع للـ Padding
+        val r = chunk.length % 4
+        if (r > 0) {
+            chunk.append(if (r == 2) "==" else if (r == 3) "=" else "")
+        }
 
         try {
-            // نستخدم Base64.DEFAULT وهو متوافق مع كل إصدارات الأندرويد
-            // كما أنه يعالج مشاكل الـ Padding تلقائياً
-            val decodedBytes = Base64.decode(part, Base64.DEFAULT)
-
-            // استخراج الأرقام
-            var num = 0
-            for (b in decodedBytes) {
-                if (b in 48..57) { // 48='0', 57='9'
+            val bytes = decoder.decode(chunk.toString())
+            var num = 0L
+            // استخراج الأرقام مباشرة من مصفوفة البايتات
+            for (i in bytes.indices) {
+                val b = bytes[i].toInt()
+                if (b in 48..57) { // أكواد ASCII للأرقام 0-9
                     num = num * 10 + (b - 48)
                 }
             }
-
-            // حفظ البايت في الذاكرة
             if (num > 0) {
-                outputBytes[writeIndex++] = (num - dynamicKey).toByte()
+                out.write((num - key).toInt())
+                return 1 // نجاح
             }
-        } catch (e: IllegalArgumentException) {
-            // في حالة كان النص غير صالح، نتخطاه بسرعة بدون انهيار
-            continue
+        } catch (ignored: Exception) {
         }
+        return 0 // فشل هذا الجزء
     }
-
-    // 6️⃣ تحويل البايتات إلى HTML مقروء دفعة واحدة
-    val decodedHtmlString = String(outputBytes, 0, writeIndex, Charsets.UTF_8)
-
-    if (decodedHtmlString.isBlank()) {
-        Log.e(TAG, "❌ فشل فك التشفير.")
-        return doc
-    }
-
-    Log.i(TAG, "✅ تم فك تشفير ${writeIndex} حرف في جزء من الثانية!")
-    
-    return Jsoup.parse(decodedHtmlString)
-}
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = "${request.data}$page/"
@@ -525,8 +536,6 @@ private fun decodeHtml(doc: Document): Document {
             Log.i(TAG, "[4/5] Fetching and decoding watch page...")
             val watchDoc = app.get(finalCimaNowUrl, referer = data).document
             val decodedDoc = decodeHtml(watchDoc)
-            Log.v(TAG, "   - Decoded Watch Page HTML: ${decodedDoc.html()}") // طباعة الـ HTML لصفحة السيرفرات
-
             val serverElements = decodedDoc.select("ul.tabcontent li")
             if (serverElements.isEmpty()) {
                 Log.e(TAG, "   - ❌ CRITICAL: No server elements found after decoding.")
@@ -536,54 +545,50 @@ private fun decodeHtml(doc: Document): Document {
 
             // ========== [5] استخراج روابط السيرفرات ==========
             Log.i(TAG, "[5/5] Processing server elements...")
-            coroutineScope {
-    serverElements.map { serverElement ->
-        async {
-            val dataIndex = serverElement.attr("data-index")
-            val dataId = serverElement.attr("data-id")
-            val name = serverElement.text().trim()
-            Log.d(TAG, "   -> Processing server: '$name' (id=$dataId, index=$dataIndex)")
+            serverElements.apmap { serverElement ->
+                val dataIndex = serverElement.attr("data-index")
+                val dataId = serverElement.attr("data-id")
+                val name = serverElement.text().trim()
+                Log.d(TAG, "   -> Processing server: '$name' (id=$dataId, index=$dataIndex)")
 
-            val serverUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$dataIndex&id=$dataId"
+                val serverUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$dataIndex&id=$dataId"
 
-            try {
-                val playerDoc = app.get(serverUrl, referer = finalCimaNowUrl).document
-                val iframeUrl = playerDoc.selectFirst("iframe")?.attr("src")?.let {
-                    if (it.startsWith("//")) "https:$it" else it
-                }
+                try {
+                    val playerDoc = app.get(serverUrl, referer = finalCimaNowUrl).document
+                    val iframeUrl = playerDoc.selectFirst("iframe")?.attr("src")?.let {
+                        if (it.startsWith("//")) "https:$it" else it
+                    }
 
-                if (iframeUrl.isNullOrBlank()) {
-                    Log.w(TAG, "      - ⚠️ Iframe URL is blank for server '$name'.")
-                    return@async
-                }
+                    if (iframeUrl.isNullOrBlank()) {
+                        Log.w(TAG, "      - ⚠️ Iframe URL is blank for server '$name'.")
+                        return@apmap // التخطي إلى السيرفر التالي
+                    }
 
-                Log.d(TAG, "      - Got iframe URL: $iframeUrl")
-                Log.d(TAG, "      - Dispatching to handler for '$name'...")
+                    Log.d(TAG, "      - Got iframe URL: $iframeUrl")
+                    Log.d(TAG, "      - Dispatching to handler for '$name'...")
 
-                when {
-                    name.contains("Cima Now", true) -> handlecima(iframeUrl, name, callback)
-                    name.contains("VidPro", true) -> handleVidPro(iframeUrl, name, callback)
-                    name.contains("Govid", true) || name.contains("Goovid", true) -> handleGovid(iframeUrl, name, callback)
-                    name.contains("Vidlook", true) -> handleVidlook(iframeUrl, name, callback)
-                    name.contains("Streamwish", true) -> handleStreamwish(iframeUrl, name, callback)
-                    name.contains("Streamfile", true) || name.contains("Luluvid", true) -> handleStreamfileAndLuluvid(iframeUrl, name, callback)
-                    name.contains("Vadbam", true) || name.contains("Viidshare", true) -> handleVadbamAndViidshare(iframeUrl, name, callback)
-                    else -> {
-                        Log.d(TAG, "      - No specific handler for '$name', using generic loadExtractor.")
-                        try {
-                            loadExtractor(iframeUrl, finalCimaNowUrl, subtitleCallback, callback)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "         - ❌ Error in loadExtractor for '$name': ${e.message}")
+                    // توجيه الرابط للدالة المناسبة
+                    when {
+                        name.contains("Cima Now", true) -> handlecima(iframeUrl, name, callback)
+                        name.contains("VidPro", true) -> handleVidPro(iframeUrl, name, callback)
+                        name.contains("Govid", true) || name.contains("Goovid", true) -> handleGovid(iframeUrl, name, callback)
+                        name.contains("Vidlook", true) -> handleVidlook(iframeUrl, name, callback)
+                        name.contains("Streamwish", true) -> handleStreamwish(iframeUrl, name, callback)
+                        name.contains("Streamfile", true) || name.contains("Luluvid", true) -> handleStreamfileAndLuluvid(iframeUrl, name, callback)
+                        name.contains("Vadbam", true) || name.contains("Viidshare", true) -> handleVadbamAndViidshare(iframeUrl, name, callback)
+                        else -> {
+                            Log.d(TAG, "      - No specific handler for '$name', using generic loadExtractor.")
+                            try {
+                                loadExtractor(iframeUrl, finalCimaNowUrl, subtitleCallback, callback)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "         - ❌ Error in loadExtractor for '$name': ${e.message}")
+                            }
                         }
                     }
+                } catch (e: Exception) {
+                    Log.e(TAG, "   - ❌ Failed to fetch iframe for server '$name': ${e.message}")
                 }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "   - ❌ Failed to fetch iframe for server '$name': ${e.message}")
             }
-        }
-    }.awaitAll()
-}
         } catch (e: Exception) {
             Log.e(TAG, "💥 FATAL ERROR in loadLinks: ${e.message}", e)
         } finally {
