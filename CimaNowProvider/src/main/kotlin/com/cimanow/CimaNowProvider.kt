@@ -545,50 +545,54 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
 
             // ========== [5] استخراج روابط السيرفرات ==========
             Log.i(TAG, "[5/5] Processing server elements...")
-            serverElements.apmap { serverElement ->
-                val dataIndex = serverElement.attr("data-index")
-                val dataId = serverElement.attr("data-id")
-                val name = serverElement.text().trim()
-                Log.d(TAG, "   -> Processing server: '$name' (id=$dataId, index=$dataIndex)")
+            coroutineScope {
+    serverElements.map { serverElement ->
+        async {
+            val dataIndex = serverElement.attr("data-index")
+            val dataId = serverElement.attr("data-id")
+            val name = serverElement.text().trim()
+            Log.d(TAG, "   -> Processing server: '$name' (id=$dataId, index=$dataIndex)")
 
-                val serverUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$dataIndex&id=$dataId"
+            val serverUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$dataIndex&id=$dataId"
 
-                try {
-                    val playerDoc = app.get(serverUrl, referer = finalCimaNowUrl).document
-                    val iframeUrl = playerDoc.selectFirst("iframe")?.attr("src")?.let {
-                        if (it.startsWith("//")) "https:$it" else it
-                    }
+            try {
+                val playerDoc = app.get(serverUrl, referer = finalCimaNowUrl).document
+                val iframeUrl = playerDoc.selectFirst("iframe")?.attr("src")?.let {
+                    if (it.startsWith("//")) "https:$it" else it
+                }
 
-                    if (iframeUrl.isNullOrBlank()) {
-                        Log.w(TAG, "      - ⚠️ Iframe URL is blank for server '$name'.")
-                        return@apmap // التخطي إلى السيرفر التالي
-                    }
+                if (iframeUrl.isNullOrBlank()) {
+                    Log.w(TAG, "      - ⚠️ Iframe URL is blank for server '$name'.")
+                    return@async
+                }
 
-                    Log.d(TAG, "      - Got iframe URL: $iframeUrl")
-                    Log.d(TAG, "      - Dispatching to handler for '$name'...")
+                Log.d(TAG, "      - Got iframe URL: $iframeUrl")
+                Log.d(TAG, "      - Dispatching to handler for '$name'...")
 
-                    // توجيه الرابط للدالة المناسبة
-                    when {
-                        name.contains("Cima Now", true) -> handlecima(iframeUrl, name, callback)
-                        name.contains("VidPro", true) -> handleVidPro(iframeUrl, name, callback)
-                        name.contains("Govid", true) || name.contains("Goovid", true) -> handleGovid(iframeUrl, name, callback)
-                        name.contains("Vidlook", true) -> handleVidlook(iframeUrl, name, callback)
-                        name.contains("Streamwish", true) -> handleStreamwish(iframeUrl, name, callback)
-                        name.contains("Streamfile", true) || name.contains("Luluvid", true) -> handleStreamfileAndLuluvid(iframeUrl, name, callback)
-                        name.contains("Vadbam", true) || name.contains("Viidshare", true) -> handleVadbamAndViidshare(iframeUrl, name, callback)
-                        else -> {
-                            Log.d(TAG, "      - No specific handler for '$name', using generic loadExtractor.")
-                            try {
-                                loadExtractor(iframeUrl, finalCimaNowUrl, subtitleCallback, callback)
-                            } catch (e: Exception) {
-                                Log.e(TAG, "         - ❌ Error in loadExtractor for '$name': ${e.message}")
-                            }
+                when {
+                    name.contains("Cima Now", true) -> handlecima(iframeUrl, name, callback)
+                    name.contains("VidPro", true) -> handleVidPro(iframeUrl, name, callback)
+                    name.contains("Govid", true) || name.contains("Goovid", true) -> handleGovid(iframeUrl, name, callback)
+                    name.contains("Vidlook", true) -> handleVidlook(iframeUrl, name, callback)
+                    name.contains("Streamwish", true) -> handleStreamwish(iframeUrl, name, callback)
+                    name.contains("Streamfile", true) || name.contains("Luluvid", true) -> handleStreamfileAndLuluvid(iframeUrl, name, callback)
+                    name.contains("Vadbam", true) || name.contains("Viidshare", true) -> handleVadbamAndViidshare(iframeUrl, name, callback)
+                    else -> {
+                        Log.d(TAG, "      - No specific handler for '$name', using generic loadExtractor.")
+                        try {
+                            loadExtractor(iframeUrl, finalCimaNowUrl, subtitleCallback, callback)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "         - ❌ Error in loadExtractor for '$name': ${e.message}")
                         }
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "   - ❌ Failed to fetch iframe for server '$name': ${e.message}")
                 }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "   - ❌ Failed to fetch iframe for server '$name': ${e.message}")
             }
+        }
+    }.awaitAll()
+}
         } catch (e: Exception) {
             Log.e(TAG, "💥 FATAL ERROR in loadLinks: ${e.message}", e)
         } finally {
