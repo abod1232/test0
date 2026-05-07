@@ -364,6 +364,379 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
         return Base64.encodeToString(bytes, Base64.NO_WRAP)
     }
 
+            override suspend fun loadLinks(
+                data: String,
+                isCasting: Boolean,
+                subtitleCallback: (SubtitleFile) -> Unit,
+                callback: (ExtractorLink) -> Unit
+            ): Boolean {
+                val TAG = "CimaNowLoadLinks"
+                Log.i(TAG, "================ [START LOADLINKS] ================")
+                Log.d(TAG, "-> Data URL: $data")
+
+                try {
+                    // ========== [1] جلب صفحة الفيلم الأصلية ==========
+                    Log.i(TAG, "[1/6] Fetching initial movie page...")
+                    val moviePageDoc = app.get(data).document
+
+                    // ========== [2] البحث عن رابط freex2line ==========
+                    Log.i(TAG, "[2/6] Searching for freex2line intermediate link...")
+                    var intermediateLink = moviePageDoc.selectFirst("ul.btns li a.shine[href*='freex2line']")?.attr("href")
+
+                    if (intermediateLink.isNullOrBlank()) {
+                        Log.w(TAG, "   - Precise selector failed, trying a general search...")
+                        intermediateLink = moviePageDoc.select("a[href*='freex2line']").firstOrNull()?.attr("href")
+                    }
+
+                    if (intermediateLink.isNullOrBlank()) {
+                        Log.e(TAG, "   - ❌ CRITICAL: Could not find any freex2line link.")
+                        throw ErrorLoadingException("Failed to find intermediate link.")
+                    }
+                    Log.d(TAG, "   ✅ Found intermediate link: $intermediateLink")
+
+                    // ========== [3] تجاوز الرابط المختصر ==========
+                    Log.i(TAG, "[3/6] Resolving shortlink via resolveFreex2line...")
+                    val finalCimaNowUrl = resolveFreex2line(intermediateLink, this.context)
+
+                    if (finalCimaNowUrl.isNullOrBlank()) {
+                        Log.e(TAG, "   - ❌ CRITICAL: resolveFreex2line returned null.")
+                        throw ErrorLoadingException("Failed to bypass shortlink.")
+                    }
+                    Log.i(TAG, "   ✅ Watch page URL obtained: $finalCimaNowUrl")
+
+                    // ========== [4] جلب وفك تشفير صفحة المشاهدة ==========
+                    Log.i(TAG, "[4/6] Fetching and decoding watch page...")
+                    val watchDoc = app.get(finalCimaNowUrl, referer = data).document
+                    val decodedDoc = decodeHtml(watchDoc)
+
+                    // استخدام تحديد دقيق لتقليل الأخطاء وتسريع العمل
+                    val serverElements = decodedDoc.select("ul#watch li[data-index]")
+                    if (serverElements.isEmpty()) {
+                        Log.w(TAG, "   - ⚠️ No watch server elements found after decoding.")
+                    } else {
+                        Log.i(TAG, "   ✅ Found ${serverElements.size} watch server elements.")
+                    }
+
+                    // ========== [5] استخراج روابط السيرفرات (المشاهدة) ==========
+                    Log.i(TAG, "[5/6] Processing WATCH server elements...")
+                    coroutineScope {
+                        serverElements.map { serverElement ->
+                            async {
+                                val dataIndex = serverElement.attr("data-index")
+                                val dataId = serverElement.attr("data-id")
+                                val name = serverElement.text().trim()
+                                Log.d(TAG, "   -> Processing server: '$name' (id=$dataId, index=$dataIndex)")
+
+                                val serverUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$dataIndex&id=$dataId"
+
+                                try {
+                                    val playerDoc = app.get(serverUrl, referer = finalCimaNowUrl).document
+                                    val iframeUrl = playerDoc.selectFirst("iframe")?.attr("src")?.let {
+                                        if (it.startsWith("//")) "https:$it" else it
+                                    }
+
+                                    if (iframeUrl.isNullOrBlank()) {
+                                        Log.w(TAG, "      - ⚠️ Iframe URL is blank for server '$name'.")
+                                        return@async
+                                    }
+
+                                    Log.d(TAG, "      - Got iframe URL: $iframeUrl")
+
+                                    when {
+                                        name.contains("Cima Now", true) -> handlecima(iframeUrl, name, callback)
+                                        name.contains("VidPro", true) -> handleVidPro(iframeUrl, name, callback)
+                                        name.contains("Govid", true) || name.contains("Goovid", true) -> handleGovid(iframeUrl, name, callback)
+                                        name.contains("Vidlook", true) -> handleVidlook(iframeUrl, name, callback)
+                                        name.contains("Streamwish", true) -> handleStreamwish(iframeUrl, name, callback)
+                                        name.contains("Streamfile", true) || name.contains("Luluvid", true) -> handleStreamfileAndLuluvid(iframeUrl, name, callback)
+                                        name.contains("Vadbam", true) || name.contains("Viidshare", true) -> handleVadbamAndViidshare(iframeUrl, name, callback)
+                                        else -> {
+                                            try {
+                                                loadExtractor(iframeUrl, finalCimaNowUrl, subtitleCallback, callback)
+                                            } catch (e: Exception) {
+                                                Log.e(TAG, "         - ❌ Error in loadExtractor for '$name': ${e.message}")
+                                            }
+                                        }
+                                    }
+
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "   - ❌ Failed to fetch iframe for server '$name': ${e.message}")
+                                }
+                            }
+                        }.awaitAll()
+                    }
+
+                    // ========== [6] استخراج روابط التحميل المباشرة ==========
+                    // ========== [6] استخراج روابط التحميل المباشرة ==========
+                    Log.i(TAG, "[6/6] Processing DOWNLOAD links...")
+                    val downloadLinks = decodedDoc.select("ul#download li a[href]")
+
+                    coroutineScope {
+                        downloadLinks.map { aTag ->
+                            async {
+                                var linkUrl = aTag.attr("href")
+                                val qualityText = aTag.text().trim()
+                                val qualityNum = getQualityFromName(qualityText)
+
+                                // 1. تنظيف الروابط من التوجيه (مثل href.li)
+                                if (linkUrl.startsWith("https://href.li/?")) {
+                                    linkUrl = linkUrl.substringAfter("https://href.li/?")
+                                }
+
+                                Log.d(TAG, "   -> Processing Link: $linkUrl (Quality: $qualityText)")
+
+                                // 2. توجيه الرابط (بدون فك تشفير Jetload)
+                                try {
+                                    when {
+                                        linkUrl.contains("jetload", true) -> {
+                                            // تمرير الرابط الأصلي كما هو لمستخرج Jetload
+                                            handleJetload(linkUrl, qualityNum, finalCimaNowUrl, callback)
+                                        }
+                                        linkUrl.contains("forafile", true) -> {
+                                            handleForafile(linkUrl, qualityNum, finalCimaNowUrl, callback)
+                                        }
+                                        linkUrl.contains("frdl", false) || linkUrl.endsWith(".mp4") || linkUrl.endsWith(".mkv") -> {
+                                            newExtractorLink(
+                                                source = "CimaNow Direct",
+                                                name = "CimaNow Direct",
+                                                url = linkUrl,
+                                            ) {
+                                                referer = finalCimaNowUrl
+                                                quality = qualityNum
+                                            }
+                                        }
+                                        else -> {
+                                            loadExtractor(linkUrl, finalCimaNowUrl, subtitleCallback, callback)
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Failed to load download link: ${e.message}")
+                                }
+                            }
+                        }.awaitAll()
+                    }
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "💥 FATAL ERROR in loadLinks: ${e.message}", e)
+                } finally {
+                    Log.i(TAG, "================ [END LOADLINKS] =================")
+                }
+
+                return true
+            }
+
+            // =======================================================
+            // مستخرجات المشاهدة الأصلية
+            // =======================================================
+            private suspend fun handlecima(iframeUrl: String, name: String, callback: (ExtractorLink) -> Unit) {
+                try {
+                    val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
+                    val iframeResponse = app.get(finalUrl, referer = finalUrl).text
+
+                    val regex = Regex("""\[(\d+p)]\s+(/uploads/[^\"]+\.mp4)""")
+                    val baseUrl = Regex("""(https?://[^/]+)""").find(finalUrl)?.groupValues?.get(1) ?: ""
+                    val links = mutableListOf<ExtractorLink>()
+                    regex.findAll(iframeResponse).forEach { match ->
+                        val qualityStr = match.groupValues[1]
+                        val filePath = match.groupValues[2]
+                        val videoUrl = baseUrl + filePath
+
+                        links.add(
+                            newExtractorLink(
+                                source = "CimaNow",
+                                name = "CimaNow",
+                                url = videoUrl
+                            ).apply {
+                                this.quality = getQualityFromName(qualityStr)
+                                this.referer = finalUrl
+                            }
+                        )
+                    }
+                    links.sortByDescending { it.quality }
+                    links.forEach { link -> callback.invoke(link) }
+                } catch (e: Exception) {}
+            }
+
+            private suspend fun handleVidPro(iframeUrl: String, name: String, callback: (ExtractorLink) -> Unit) {
+                try { val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
+                    loadExtractor(finalUrl, mainUrl, {}, callback) } catch (e: Exception) {}
+            }
+            private suspend fun handleGovid(iframeUrl: String, name: String, callback: (ExtractorLink) -> Unit) {
+                try { val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
+                    loadExtractor(finalUrl, mainUrl, {}, callback) } catch (e: Exception) {}
+            }
+            private suspend fun handleVidlook(iframeUrl: String, name: String, callback: (ExtractorLink) -> Unit) {
+                try { val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
+                    loadExtractor(finalUrl, mainUrl, {}, callback) } catch (e: Exception) {}
+            }
+            private suspend fun handleStreamwish(iframeUrl: String, name: String, callback: (ExtractorLink) -> Unit) {
+                try { val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
+                    loadExtractor(finalUrl, mainUrl, {}, callback) } catch (e: Exception) {}
+            }
+            private suspend fun handleStreamfileAndLuluvid(iframeUrl: String, name: String, callback: (ExtractorLink) -> Unit) {
+                try { val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
+                    loadExtractor(finalUrl, mainUrl, {}, callback) } catch (e: Exception) {}
+            }
+            private suspend fun handleVadbamAndViidshare(iframeUrl: String, name: String, callback: (ExtractorLink) -> Unit) {
+                try { val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
+                    loadExtractor(finalUrl, mainUrl, {}, callback) } catch (e: Exception) {}
+            }
+
+            // =======================================================
+            // مستخرجات التحميل المخصصة الجديدة
+            // =======================================================
+            // =======================================================
+            // مستخرج Jetload
+            // =======================================================
+            private suspend fun handleJetload(url: String, quality: Int, referer: String, callback: (ExtractorLink) -> Unit) {
+                val TAG = "JetloadExtractor"
+                try {
+                    val headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36",
+                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                        "Accept-Language" to "ar-EG,ar;q=0.9"
+                    )
+
+                    // الخطوة 1: الدخول للصفحة الأولى لحفظ الكوكيز
+                    val res1 = app.get(url, headers = headers)
+                    val sessionCookies = mutableMapOf<String, String>()
+                    sessionCookies.putAll(res1.cookies)
+
+                    // الخطوة 2: الدخول لصفحة العداد واستخراج الرموز
+                    val targetUrl = "https://jetload.pp.ua/Jetload4/"
+                    val headers2 = headers + mapOf("Referer" to url)
+
+                    val res2 = app.get(targetUrl, headers = headers2, cookies = sessionCookies)
+                    val html = res2.text
+                    sessionCookies.putAll(res2.cookies)
+
+                    val extraToken = Regex("""window\.extraToken\s*=\s*'([^']+)'""").find(html)?.groupValues?.get(1)
+                    val dataToken = Regex("""data-token="([^"]+)"""").find(html)?.groupValues?.get(1)
+
+                    if (extraToken == null || dataToken == null) {
+                        Log.e(TAG, "[-] Failed to extract tokens.")
+                        return
+                    }
+
+                    // الخطوة 3: الانتظار 10 ثواني
+                    (context as? Activity)?.runOnUiThread {
+                        Toast.makeText(context, "Jetload: جاري جلب الجودة ${quality}p (10 ثواني)...", Toast.LENGTH_SHORT).show()
+                    }
+                    delay(10000)
+
+                    // الخطوة 4: طلب رابط التحميل الوسيط (AJAX)
+                    val ajaxUrl = "https://jetload.pp.ua/Jetload4/get-link.php?token=$dataToken"
+                    val ajaxHeaders = headers + mapOf(
+                        "X-Requested-With" to "XMLHttpRequest",
+                        "Referer" to targetUrl
+                    )
+
+                    val finalResp = app.get(ajaxUrl, headers = ajaxHeaders, cookies = sessionCookies)
+                    val rawLink = finalResp.text.trim()
+
+                    if (rawLink.startsWith("http")) {
+                        // دمج التوكن مع الرابط
+                        val intermediateLink = "$rawLink?t=$extraToken"
+                        Log.d(TAG, "[+] Final Media Link: $intermediateLink")
+
+                        // الخطوة 5: نمرر الرابط فوراً للمشغل!
+                        // (المشغل ExoPlayer سيتولى عملية الـ Redirect وتنزيل مسار الـ mp4 لتجنب الـ Timeout)
+                        callback.invoke(
+                            newExtractorLink(
+                                source = "Jetload",
+                                name = "Jetload",
+                                url = intermediateLink,
+                            ) {
+                                this.referer = targetUrl
+                                this.quality = quality
+                            }
+                        )
+                    } else {
+                        Log.e(TAG, "[-] Invalid server response: $rawLink")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "[-] Error in Jetload: ${e.message}")
+                }
+            }
+
+            private suspend fun handleForafile(url: String, quality: Int, referer: String, callback: (ExtractorLink) -> Unit) {
+                val TAG = "ForafileExtractor"
+                try {
+                    val match = Regex("""(https://forafile\.com/([^/]+)/)""").find(url)
+                    if (match == null) return
+
+                    val baseUrl = match.groupValues[1]
+                    val fileId = match.groupValues[2]
+
+                    val headers = mapOf("user-agent" to "Mozilla/5.0 (Linux; Android 13)", "referer" to url)
+                    val data = mapOf(
+                        "op" to "download2", "id" to fileId, "rand" to "",
+                        "referer" to "", "method_free" to "", "method_premium" to "", "adblock_detected" to "0"
+                    )
+
+                    val response = app.post(baseUrl, headers = headers, data = data, allowRedirects = false)
+                    val location = response.headers["location"] ?: response.headers["Location"]
+
+                    if (!location.isNullOrBlank()) {
+                        callback.invoke(
+                            newExtractorLink(
+                                source = "Forafile",
+                                name = "Forafile",
+                                url = location,
+                            ) {
+                                this.referer = baseUrl
+                                this.quality = quality
+                            }
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "[-] Error in Forafile: ${e.message}")
+                }
+            }
+            private fun toSearchResponse(element: Element): SearchResponse? {
+                if (element.select("a").text().contains("الكل")) return null
+
+                val urlElement = element.selectFirst("a")
+                val posterUrl = element.select("img.lazy").attr("data-src").ifBlank {
+                    element.select("img.lazy").attr("src")
+                }
+                val category = element.select("ul.info li[aria-label=tab]").text()
+                val extype = element.select("ul.info li[aria-label=tab]")
+                val title = element.selectFirst("li[aria-label=title]")?.let {
+                    it.select("em").remove()
+                    it.text()
+                } ?: ""
+
+                val year = element.select("li[aria-label=year]").text().toIntOrNull()
+                val qualitiesSelector = element.select("li[aria-label=ribbon]").mapNotNull {
+                    it.text().takeIf { text -> text.contains(Regex("""\d+""")) }
+                }.joinToString(" ")
+                val quality = getQualityFromString(qualitiesSelector)
+
+                val type = if (extype.text().contains("مسلسلات", true) || extype.text().contains("موسم", true)) {
+                    TvType.TvSeries
+                } else {
+                    TvType.Movie
+                }
+
+                return urlElement?.attr("href")?.let { href ->
+                    newMovieSearchResponse(
+                        name = title.replace(Regex("$category|موسم 1|برنامج|فيلم|مترجم|اون لاين|مسلسل|مشاهدة|انمي|أنمي|\\||"), ""),
+                        url = href,
+                        type = type,
+                    ) {
+                        this.posterUrl = posterUrl
+                        this.year = year
+                        this.quality = quality
+                    }
+                }
+            }
+
+        }
+
+
+
+
 
 
 //    private suspend fun resolveFreex2line(url: String, context: android.content.Context?): String? {
@@ -491,366 +864,3 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
 //    }
 
 
-
-            override suspend fun loadLinks(
-                data: String,
-                isCasting: Boolean,
-                subtitleCallback: (SubtitleFile) -> Unit,
-                callback: (ExtractorLink) -> Unit
-            ): Boolean {
-                val TAG = "CimaNowLoadLinks"
-                Log.i(TAG, "================ [START LOADLINKS] ================")
-                Log.d(TAG, "-> Data URL: $data")
-
-                try {
-                    // ========== [1] جلب صفحة الفيلم الأصلية ==========
-                    Log.i(TAG, "[1/6] Fetching initial movie page...")
-                    val moviePageDoc = app.get(data).document
-
-                    // ========== [2] البحث عن رابط freex2line ==========
-                    Log.i(TAG, "[2/6] Searching for freex2line intermediate link...")
-                    var intermediateLink = moviePageDoc.selectFirst("ul.btns li a.shine[href*='freex2line']")?.attr("href")
-
-                    if (intermediateLink.isNullOrBlank()) {
-                        Log.w(TAG, "   - Precise selector failed, trying a general search...")
-                        intermediateLink = moviePageDoc.select("a[href*='freex2line']").firstOrNull()?.attr("href")
-                    }
-
-                    if (intermediateLink.isNullOrBlank()) {
-                        Log.e(TAG, "   - ❌ CRITICAL: Could not find any freex2line link.")
-                        throw ErrorLoadingException("Failed to find intermediate link.")
-                    }
-                    Log.d(TAG, "   ✅ Found intermediate link: $intermediateLink")
-
-                    // ========== [3] تجاوز الرابط المختصر ==========
-                    Log.i(TAG, "[3/6] Resolving shortlink via resolveFreex2line...")
-                    val finalCimaNowUrl = resolveFreex2line(intermediateLink, this.context)
-
-                    if (finalCimaNowUrl.isNullOrBlank()) {
-                        Log.e(TAG, "   - ❌ CRITICAL: resolveFreex2line returned null.")
-                        throw ErrorLoadingException("Failed to bypass shortlink.")
-                    }
-                    Log.i(TAG, "   ✅ Watch page URL obtained: $finalCimaNowUrl")
-
-                    // ========== [4] جلب وفك تشفير صفحة المشاهدة ==========
-                    Log.i(TAG, "[4/6] Fetching and decoding watch page...")
-                    val watchDoc = app.get(finalCimaNowUrl, referer = data).document
-                    val decodedDoc = decodeHtml(watchDoc)
-
-                    // استخدام تحديد دقيق لتقليل الأخطاء وتسريع العمل
-                    val serverElements = decodedDoc.select("ul#watch li[data-index]")
-                    if (serverElements.isEmpty()) {
-                        Log.w(TAG, "   - ⚠️ No watch server elements found after decoding.")
-                    } else {
-                        Log.i(TAG, "   ✅ Found ${serverElements.size} watch server elements.")
-                    }
-
-                    // ========== [5] استخراج روابط السيرفرات (المشاهدة) ==========
-                    Log.i(TAG, "[5/6] Processing WATCH server elements...")
-                    coroutineScope {
-                        serverElements.map { serverElement ->
-                            async {
-                                val dataIndex = serverElement.attr("data-index")
-                                val dataId = serverElement.attr("data-id")
-                                val name = serverElement.text().trim()
-                                Log.d(TAG, "   -> Processing server: '$name' (id=$dataId, index=$dataIndex)")
-
-                                val serverUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$dataIndex&id=$dataId"
-
-                                try {
-                                    val playerDoc = app.get(serverUrl, referer = finalCimaNowUrl).document
-                                    val iframeUrl = playerDoc.selectFirst("iframe")?.attr("src")?.let {
-                                        if (it.startsWith("//")) "https:$it" else it
-                                    }
-
-                                    if (iframeUrl.isNullOrBlank()) {
-                                        Log.w(TAG, "      - ⚠️ Iframe URL is blank for server '$name'.")
-                                        return@async
-                                    }
-
-                                    Log.d(TAG, "      - Got iframe URL: $iframeUrl")
-
-                                    when {
-                                        name.contains("Cima Now", true) -> handlecima(iframeUrl, name, callback)
-                                        name.contains("VidPro", true) -> handleVidPro(iframeUrl, name, callback)
-                                        name.contains("Govid", true) || name.contains("Goovid", true) -> handleGovid(iframeUrl, name, callback)
-                                        name.contains("Vidlook", true) -> handleVidlook(iframeUrl, name, callback)
-                                        name.contains("Streamwish", true) -> handleStreamwish(iframeUrl, name, callback)
-                                        name.contains("Streamfile", true) || name.contains("Luluvid", true) -> handleStreamfileAndLuluvid(iframeUrl, name, callback)
-                                        name.contains("Vadbam", true) || name.contains("Viidshare", true) -> handleVadbamAndViidshare(iframeUrl, name, callback)
-                                        else -> {
-                                            try {
-                                                loadExtractor(iframeUrl, finalCimaNowUrl, subtitleCallback, callback)
-                                            } catch (e: Exception) {
-                                                Log.e(TAG, "         - ❌ Error in loadExtractor for '$name': ${e.message}")
-                                            }
-                                        }
-                                    }
-
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "   - ❌ Failed to fetch iframe for server '$name': ${e.message}")
-                                }
-                            }
-                        }.awaitAll()
-                    }
-
-                    // ========== [6] استخراج روابط التحميل المباشرة ==========
-                    Log.i(TAG, "[6/6] Processing DOWNLOAD links...")
-                    val downloadLinks = decodedDoc.select("ul#download li a[href]")
-                    Log.i(TAG, "   ✅ Found ${downloadLinks.size} download links.")
-
-                    coroutineScope {
-                        downloadLinks.map { aTag ->
-                            async {
-                                var linkUrl = aTag.attr("href")
-                                val qualityText = aTag.text().trim()
-                                val qualityNum = getQualityFromName(qualityText)
-
-                                // 1. تنظيف الروابط من التوجيه (مثل href.li)
-                                if (linkUrl.startsWith("https://href.li/?")) {
-                                    linkUrl = linkUrl.substringAfter("https://href.li/?")
-                                }
-
-                                // 2. فك تشفير الروابط المخفية بـ Base64 (مثل روابط jetload)
-                                if (linkUrl.contains("?link=")) {
-                                    try {
-                                        val base64Data = linkUrl.substringAfter("?link=")
-                                        val decodedBytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
-                                        linkUrl = String(decodedBytes)
-                                    } catch (e: Exception) {
-                                        Log.e(TAG, "Failed to decode base64 link: $linkUrl")
-                                    }
-                                }
-
-                                Log.d(TAG, "   -> Found Download Link: $linkUrl (Quality: $qualityText)")
-
-                                // 3. توجيه الرابط للمُعالج المناسب
-                                try {
-                                    when {
-                                        linkUrl.contains("jetload", true) -> handleJetload(linkUrl, qualityNum, finalCimaNowUrl, callback)
-                                        linkUrl.contains("forafile", true) -> handleForafile(linkUrl, qualityNum, finalCimaNowUrl, callback)
-                                        linkUrl.contains("frdl", true) || linkUrl.endsWith(".mp4") || linkUrl.endsWith(".mkv") -> {
-                                            callback.invoke(
-                                                newExtractorLink(
-                                                    source = "CimaNow Direct",
-                                                    name = "CimaNow Direct",
-                                                    url = linkUrl,
-                                                ) {
-                                                    referer = finalCimaNowUrl
-                                                    quality = qualityNum
-                                                }
-                                            )
-                                        }
-                                        else -> {
-                                            loadExtractor(linkUrl, finalCimaNowUrl, subtitleCallback, callback)
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Failed to load download link: ${e.message}")
-                                }
-                            }
-                        }.awaitAll()
-                    }
-
-                } catch (e: Exception) {
-                    Log.e(TAG, "💥 FATAL ERROR in loadLinks: ${e.message}", e)
-                } finally {
-                    Log.i(TAG, "================ [END LOADLINKS] =================")
-                }
-
-                return true
-            }
-
-            // =======================================================
-            // مستخرجات المشاهدة الأصلية
-            // =======================================================
-            private suspend fun handlecima(iframeUrl: String, name: String, callback: (ExtractorLink) -> Unit) {
-                try {
-                    val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
-                    val iframeResponse = app.get(finalUrl, referer = finalUrl).text
-
-                    val regex = Regex("""\[(\d+p)]\s+(/uploads/[^\"]+\.mp4)""")
-                    val baseUrl = Regex("""(https?://[^/]+)""").find(finalUrl)?.groupValues?.get(1) ?: ""
-                    val links = mutableListOf<ExtractorLink>()
-                    regex.findAll(iframeResponse).forEach { match ->
-                        val qualityStr = match.groupValues[1]
-                        val filePath = match.groupValues[2]
-                        val videoUrl = baseUrl + filePath
-
-                        links.add(
-                            newExtractorLink(
-                                source = "CimaNow",
-                                name = "CimaNow",
-                                url = videoUrl
-                            ).apply {
-                                this.quality = getQualityFromName(qualityStr)
-                                this.referer = finalUrl
-                            }
-                        )
-                    }
-                    links.sortByDescending { it.quality }
-                    links.forEach { link -> callback.invoke(link) }
-                } catch (e: Exception) {}
-            }
-
-            private suspend fun handleVidPro(iframeUrl: String, name: String, callback: (ExtractorLink) -> Unit) {
-                try { val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
-                    loadExtractor(finalUrl, mainUrl, {}, callback) } catch (e: Exception) {}
-            }
-            private suspend fun handleGovid(iframeUrl: String, name: String, callback: (ExtractorLink) -> Unit) {
-                try { val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
-                    loadExtractor(finalUrl, mainUrl, {}, callback) } catch (e: Exception) {}
-            }
-            private suspend fun handleVidlook(iframeUrl: String, name: String, callback: (ExtractorLink) -> Unit) {
-                try { val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
-                    loadExtractor(finalUrl, mainUrl, {}, callback) } catch (e: Exception) {}
-            }
-            private suspend fun handleStreamwish(iframeUrl: String, name: String, callback: (ExtractorLink) -> Unit) {
-                try { val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
-                    loadExtractor(finalUrl, mainUrl, {}, callback) } catch (e: Exception) {}
-            }
-            private suspend fun handleStreamfileAndLuluvid(iframeUrl: String, name: String, callback: (ExtractorLink) -> Unit) {
-                try { val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
-                    loadExtractor(finalUrl, mainUrl, {}, callback) } catch (e: Exception) {}
-            }
-            private suspend fun handleVadbamAndViidshare(iframeUrl: String, name: String, callback: (ExtractorLink) -> Unit) {
-                try { val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
-                    loadExtractor(finalUrl, mainUrl, {}, callback) } catch (e: Exception) {}
-            }
-
-            // =======================================================
-            // مستخرجات التحميل المخصصة الجديدة
-            // =======================================================
-            private suspend fun handleJetload(url: String, quality: Int, referer: String, callback: (ExtractorLink) -> Unit) {
-                val TAG = "JetloadExtractor"
-                try {
-                    val headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36",
-                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                        "Accept-Language" to "ar-EG,ar;q=0.9",
-                        "Connection" to "keep-alive"
-                    )
-
-                    val sessionCookies = mutableMapOf<String, String>()
-                    val res1 = app.get(url, headers = headers)
-                    sessionCookies.putAll(res1.cookies)
-
-                    val targetUrl = "https://jetload.pp.ua/Jetload4/"
-                    val headers2 = headers + mapOf("Referer" to url)
-                    val res2 = app.get(targetUrl, headers = headers2, cookies = sessionCookies)
-                    val html = res2.text
-                    sessionCookies.putAll(res2.cookies)
-
-                    val extraToken = Regex("""window\.extraToken\s*=\s*'([^']+)'""").find(html)?.groupValues?.get(1)
-                    val dataToken = Regex("""data-token="([^"]+)"""").find(html)?.groupValues?.get(1)
-
-                    if (extraToken == null || dataToken == null) {
-                        Log.e(TAG, "[-] Failed to extract tokens.")
-                        return
-                    }
-
-                    (context as? Activity)?.runOnUiThread {
-                        Toast.makeText(context, "Jetload: تخطي حماية السيرفر (10 ثواني)...", Toast.LENGTH_SHORT).show()
-                    }
-                    delay(10000)
-
-                    val ajaxUrl = "https://jetload.pp.ua/Jetload4/get-link.php"
-                    val ajaxHeaders = headers + mapOf("X-Requested-With" to "XMLHttpRequest", "Referer" to targetUrl)
-
-                    val finalResp = app.get(ajaxUrl, params = mapOf("token" to dataToken), headers = ajaxHeaders, cookies = sessionCookies)
-                    val rawLink = finalResp.text.trim()
-
-                    if (rawLink.startsWith("http")) {
-                        val intermediateLink = "$rawLink?t=$extraToken"
-                        val directResponse = app.get(intermediateLink, headers = headers, cookies = sessionCookies)
-
-                        callback.invoke(
-                            newExtractorLink(
-                                source = "Jetload",
-                                name = "Jetload",
-                                url = directResponse.url,
-                            ) {
-                                this.referer = targetUrl
-                                this.quality = quality
-                            }
-                        )
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "[-] Error in Jetload: ${e.message}")
-                }
-            }
-
-            private suspend fun handleForafile(url: String, quality: Int, referer: String, callback: (ExtractorLink) -> Unit) {
-                val TAG = "ForafileExtractor"
-                try {
-                    val match = Regex("""(https://forafile\.com/([^/]+)/)""").find(url)
-                    if (match == null) return
-
-                    val baseUrl = match.groupValues[1]
-                    val fileId = match.groupValues[2]
-
-                    val headers = mapOf("user-agent" to "Mozilla/5.0 (Linux; Android 13)", "referer" to url)
-                    val data = mapOf(
-                        "op" to "download2", "id" to fileId, "rand" to "",
-                        "referer" to "", "method_free" to "", "method_premium" to "", "adblock_detected" to "0"
-                    )
-
-                    val response = app.post(baseUrl, headers = headers, data = data, allowRedirects = false)
-                    val location = response.headers["location"] ?: response.headers["Location"]
-
-                    if (!location.isNullOrBlank()) {
-                        callback.invoke(
-                            newExtractorLink(
-                                source = "Forafile",
-                                name = "Forafile",
-                                url = location,
-                            ) {
-                                this.referer = baseUrl
-                                this.quality = quality
-                            }
-                        )
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "[-] Error in Forafile: ${e.message}")
-                }
-            }
-            private fun toSearchResponse(element: Element): SearchResponse? {
-                if (element.select("a").text().contains("الكل")) return null
-
-                val urlElement = element.selectFirst("a")
-                val posterUrl = element.select("img.lazy").attr("data-src").ifBlank {
-                    element.select("img.lazy").attr("src")
-                }
-                val category = element.select("ul.info li[aria-label=tab]").text()
-                val extype = element.select("ul.info li[aria-label=tab]")
-                val title = element.selectFirst("li[aria-label=title]")?.let {
-                    it.select("em").remove()
-                    it.text()
-                } ?: ""
-
-                val year = element.select("li[aria-label=year]").text().toIntOrNull()
-                val qualitiesSelector = element.select("li[aria-label=ribbon]").mapNotNull {
-                    it.text().takeIf { text -> text.contains(Regex("""\d+""")) }
-                }.joinToString(" ")
-                val quality = getQualityFromString(qualitiesSelector)
-
-                val type = if (extype.text().contains("مسلسلات", true) || extype.text().contains("موسم", true)) {
-                    TvType.TvSeries
-                } else {
-                    TvType.Movie
-                }
-
-                return urlElement?.attr("href")?.let { href ->
-                    newMovieSearchResponse(
-                        name = title.replace(Regex("$category|موسم 1|برنامج|فيلم|مترجم|اون لاين|مسلسل|مشاهدة|انمي|أنمي|\\||"), ""),
-                        url = href,
-                        type = type,
-                    ) {
-                        this.posterUrl = posterUrl
-                        this.year = year
-                        this.quality = quality
-                    }
-                }
-            }
-
-        }
