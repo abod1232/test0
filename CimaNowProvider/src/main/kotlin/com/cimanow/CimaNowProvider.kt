@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
 import org.jsoup.nodes.Element
 
-class CimaNowProvider(private val context: Context) : MainAPI() {
+class CimaNowProvider : MainAPI() {
     // الرابط الأساسي للموقع (يمكنك تغييره إذا تم تغيير الدومين مستقبلاً)
     override var mainUrl = "https://bw.alooytv13.xyz"
     override var name = "AlooyTv"
@@ -104,15 +104,14 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             val videoUrl = source.attr("src")
             if (videoUrl.isNotBlank()) {
                 callback.invoke(
-                    newExtractorLink(
+                    ExtractorLink(
                         source = name,
                         name = "AlooyTv Server",
                         url = videoUrl,
-                        ){
-                        this.referer = "$mainUrl/"
-                        this.quality = Qualities.Unknown.value
-
-                    }
+                        referer = "$mainUrl/",
+                        quality = Qualities.Unknown.value,
+                        isM3u8 = videoUrl.endsWith(".m3u8")
+                    )
                 )
             }
         }
