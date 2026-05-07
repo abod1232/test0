@@ -6,6 +6,7 @@ import android.content.Context
 @CloudstreamPlugin
 class CimaNow: Plugin() {
     override fun load(context: Context) {
-        registerMainAPI(CimaNowProvider(context))
+        // تسجيل المزود
+        registerMainAPI(AlooyTvProvider())
     }
 }
