@@ -1,7 +1,8 @@
-
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
+    // 1. أضفنا هذا السطر لتعريف إضافة الـ Serialization الخاصة بكوتلن
+    kotlin("plugin.serialization") 
 }
 
 repositories {
@@ -32,13 +33,13 @@ kotlin {
 
 
 dependencies {
-
     val cloudstream by configurations
     implementation("com.google.android.material:material:1.13.0")
     implementation("androidx.browser:browser:1.9.0")
     implementation("androidx.room:room-ktx:2.8.0")
     testImplementation("junit:junit:4.13.2")
-        cloudstream("com.lagradost:cloudstream3:pre-release")
+    cloudstream("com.lagradost:cloudstream3:pre-release")
 
-
+    // 2. أضفنا هذا السطر لجلب مكتبة kotlinx-serialization
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 }
