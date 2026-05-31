@@ -11,11 +11,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.webkit.*
-import android.widget.Button
-import android.widget.EditText
-import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.ProgressBar
+import android.widget.*
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.FragmentManager
 import java.util.Stack
@@ -25,15 +21,22 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     private lateinit var webContainer: FrameLayout
     private val webStack = Stack<WebView>()
 
-    // User-Agent قياسي لويندوز
-    private val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
+    // ✨ تم تحديث الـ User-Agent بناءً على طلبك الأخير (أندرويد)
+    private val USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36"
 
-    // الهيدرات الأساسية للطلبات (بدون حقن سكربتات)
+    // ✨ الهيدرات الدقيقة المستخرجة من سجلاتك
     private val customHeaders = mapOf(
-        "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "accept-language" to "en-GB,en;q=0.9",
-        "sec-ch-ua-platform" to "\"Windows\"",
-        "upgrade-insecure-requests" to "1"
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Encoding" to "gzip, deflate, br",
+        "Accept-Language" to "ar-EG,ar;q=0.9",
+        "Sec-Ch-Ua" to "\"Chromium\";v=\"137\", \"Not/A)Brand\";v=\"24\"",
+        "Sec-Ch-Ua-Mobile" to "?1",
+        "Sec-Ch-Ua-Platform" to "\"Android\"",
+        "Sec-Fetch-Dest" to "document",
+        "Sec-Fetch-Mode" to "navigate",
+        "Sec-Fetch-Site" to "none",
+        "Sec-Fetch-User" to "?1",
+        "Upgrade-Insecure-Requests" to "1"
     )
 
     companion object {
@@ -49,41 +52,41 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.BLACK) 
         }
-        
+
+        // شريط العنوان
         val topBar = LinearLayout(ctx).apply { 
             orientation = LinearLayout.HORIZONTAL
             setPadding(10, 10, 10, 10)
-            setBackgroundColor(Color.DKGRAY)
+            setBackgroundColor(Color.parseColor("#1A1A1A"))
             gravity = Gravity.CENTER_VERTICAL 
         }
-        
+
         val urlInput = EditText(ctx).apply { 
-            hint = "أدخل الرابط..."
+            hint = "https://anime4up.bond/"
+            setHintTextColor(Color.GRAY)
             setTextColor(Color.WHITE)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             isSingleLine = true
             imeOptions = EditorInfo.IME_ACTION_GO 
         }
-        
+
         val backBtn = Button(ctx).apply { text = "رجوع" }
         topBar.addView(urlInput)
         topBar.addView(backBtn)
-        
+
         val progressBar = ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal).apply { 
             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 8)
-            max = 100
-            progress = 0
             visibility = View.GONE 
         }
-        
+
         webContainer = FrameLayout(ctx).apply { 
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f) 
         }
-        
+
         val mainWebView = createWebView(ctx, progressBar, urlInput)
         webStack.push(mainWebView)
         webContainer.addView(mainWebView)
-        
+
         root.addView(topBar)
         root.addView(progressBar)
         root.addView(webContainer)
@@ -94,13 +97,14 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 true 
             } else false
         }
-        
+
         backBtn.setOnClickListener { handleBack() }
-        
-        loadUrlSmart(mainWebView, "https://cimanow.cc")
+
+        // التحميل الافتراضي للموقع المطلوب
+        loadUrlSmart(mainWebView, "https://anime4up.bond/")
         return root
     }
-    
+
     private fun loadUrlSmart(webView: WebView, input: String) {
         if (input.isBlank()) return
         val url = if (Patterns.WEB_URL.matcher(input).matches()) {
@@ -124,58 +128,53 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun createWebView(context: Context, progressBar: ProgressBar, urlInput: EditText): WebView {
         val webView = WebView(context)
-        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         
+        // تفعيل الكوكيز ضروري جداً لتجاوز Cloudflare
+        CookieManager.getInstance().apply {
+            setAcceptCookie(true)
+            setAcceptThirdPartyCookies(webView, true)
+        }
+
         webView.settings.apply {
-            javaScriptEnabled = true
+            javaScriptEnabled = true // المواقع الحديثة لن تعمل بدونه
             domStorageEnabled = true
             databaseEnabled = true
-            cacheMode = WebSettings.LOAD_DEFAULT
             userAgentString = USER_AGENT
+            cacheMode = WebSettings.LOAD_DEFAULT
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            mediaPlaybackRequiresUserGesture = false
-            loadWithOverviewMode = true
             useWideViewPort = true
-            javaScriptCanOpenWindowsAutomatically = true
+            loadWithOverviewMode = true
             setSupportMultipleWindows(true)
-            allowFileAccess = true
-            allowContentAccess = true
         }
-        
-        CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 progressBar.visibility = View.VISIBLE
                 urlInput.setText(url)
-                // تم إزالة حقن السكربت من هنا
             }
-            
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 progressBar.visibility = View.GONE
-                // تم إزالة حقن السكربت من هنا
+                // تم إزالة أي حقن جافا سكربت هنا
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return false
-                if (url.startsWith("intent://") || url.startsWith("market://")) return true 
                 
-                val headersToApply = mutableMapOf<String, String>().apply {
-                    putAll(customHeaders)
-                    view?.url?.let { this["Referer"] = it }
-                }
+                // منع الخروج من التطبيق للروابط الخارجية
+                if (!url.startsWith("http")) return true 
 
-                view?.loadUrl(url, headersToApply)
+                // إعادة إرسال الهيدرات مع كل ضغطة أو انتقال
+                view?.loadUrl(url, customHeaders)
                 return true
             }
         }
 
         webView.webChromeClient = object : WebChromeClient() {
-            override fun onProgressChanged(view: WebView, newProgress: Int) { 
-                progressBar.progress = newProgress 
+            override fun onProgressChanged(view: WebView, newProgress: Int) {
+                progressBar.progress = newProgress
             }
-            
+
             override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message): Boolean {
                 val newWebView = createWebView(context, progressBar, urlInput)
                 webStack.push(newWebView)
@@ -186,6 +185,7 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
                 return true
             }
         }
+        
         return webView
     }
 
