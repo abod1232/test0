@@ -21,22 +21,26 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     private lateinit var webContainer: FrameLayout
     private val webStack = Stack<WebView>()
 
-    // ✨ تم تحديث الـ User-Agent بناءً على طلبك الأخير (أندرويد)
-    private val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
+    // ✨ الرابط الأساسي الجديد
+    private val BASE_URL = "https://witanime.you"
 
-    // ✨ الهيدرات الدقيقة المستخرجة من سجلاتك
+    // ✨ User-Agent المحدث بناءً على طلبك (Chrome 148)
+    private val USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36"
+
+    // ✨ الهيدرات الدقيقة المطلوبة
     private val customHeaders = mapOf(
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Encoding" to "gzip, deflate, br",
-        "Accept-Language" to "ar-EG,ar;q=0.9",
-        "Sec-Ch-Ua" to "\"Chromium\";v=\"137\", \"Not/A)Brand\";v=\"24\"",
-        "Sec-Ch-Ua-Mobile" to "?1",
-        "Sec-Ch-Ua-Platform" to "\"Android\"",
-        "Sec-Fetch-Dest" to "document",
-        "Sec-Fetch-Mode" to "navigate",
-        "Sec-Fetch-Site" to "none",
-        "Sec-Fetch-User" to "?1",
-        "Upgrade-Insecure-Requests" to "1"
+        "sec-ch-ua" to "\"Chromium\";v=\"148\", \"Google Chrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+        "sec-ch-ua-mobile" to "?1",
+        "sec-ch-ua-platform" to "\"Android\"",
+        "upgrade-insecure-requests" to "1",
+        "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site" to "none",
+        "sec-fetch-mode" to "navigate",
+        "sec-fetch-user" to "?1",
+        "sec-fetch-dest" to "document",
+        "accept-encoding" to "gzip, deflate, br, zstd",
+        "accept-language" to "ar-EG,ar;q=0.9",
+        "priority" to "u=0, i"
     )
 
     companion object {
@@ -53,17 +57,16 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             setBackgroundColor(Color.BLACK) 
         }
 
-        // شريط العنوان
         val topBar = LinearLayout(ctx).apply { 
             orientation = LinearLayout.HORIZONTAL
             setPadding(10, 10, 10, 10)
-            setBackgroundColor(Color.parseColor("#1A1A1A"))
+            setBackgroundColor(Color.parseColor("#121212"))
             gravity = Gravity.CENTER_VERTICAL 
         }
 
         val urlInput = EditText(ctx).apply { 
-            hint = "https://anime4up.bond/"
-            setHintTextColor(Color.GRAY)
+            hint = BASE_URL
+            setHintTextColor(Color.DKGRAY)
             setTextColor(Color.WHITE)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             isSingleLine = true
@@ -100,8 +103,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
         backBtn.setOnClickListener { handleBack() }
 
-        // التحميل الافتراضي للموقع المطلوب
-        loadUrlSmart(mainWebView, "https://anime4up.bond/")
+        // تحميل الرابط الأساسي عند الفتح
+        loadUrlSmart(mainWebView, BASE_URL)
         return root
     }
 
@@ -129,14 +132,14 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
     private fun createWebView(context: Context, progressBar: ProgressBar, urlInput: EditText): WebView {
         val webView = WebView(context)
         
-        // تفعيل الكوكيز ضروري جداً لتجاوز Cloudflare
+        // تفعيل الكوكيز بشكل كامل (مهم لتجاوز الحماية)
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
             setAcceptThirdPartyCookies(webView, true)
         }
 
         webView.settings.apply {
-            javaScriptEnabled = true // المواقع الحديثة لن تعمل بدونه
+            javaScriptEnabled = true
             domStorageEnabled = true
             databaseEnabled = true
             userAgentString = USER_AGENT
@@ -145,6 +148,8 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
             useWideViewPort = true
             loadWithOverviewMode = true
             setSupportMultipleWindows(true)
+            // إيقاف فتح النوافذ المنبثقة تلقائياً لتقليل الإعلانات
+            javaScriptCanOpenWindowsAutomatically = false
         }
 
         webView.webViewClient = object : WebViewClient() {
@@ -155,16 +160,15 @@ class YoutubeSettingsBottomSheet : DialogFragment() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 progressBar.visibility = View.GONE
-                // تم إزالة أي حقن جافا سكربت هنا
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return false
                 
-                // منع الخروج من التطبيق للروابط الخارجية
+                // السماح فقط بروابط الويب ومنع Intent الخارجية
                 if (!url.startsWith("http")) return true 
 
-                // إعادة إرسال الهيدرات مع كل ضغطة أو انتقال
+                // إعادة تطبيق الهيدرات عند التنقل لضمان استمرارية الهوية
                 view?.loadUrl(url, customHeaders)
                 return true
             }
