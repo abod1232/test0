@@ -1,4 +1,23 @@
 [
+  {
+  "iconUrl": "https://aflaam.com/style/assets/images/logo.png",
+  "apiVersion": 1,
+  "repositoryUrl": "https://github.com/Abodabodd/re-3arabi",
+  "fileSize": 14800,
+  "status": 1,
+  "language": "ar",
+  "authors": [
+    "Abodabodd"
+  ],
+  "tvTypes": [
+    "TvSeries",
+    "Movie"
+  ],
+  "version": 1,
+  "internalName": "cinemana",
+  "url": "https://github.com/abod1232/test0/raw/refs/heads/builds/cinemana.cs3",
+  "name": "cinemana"
+},
     {
         "fileHash": "sha256-ce0d06c0643274bfa51ed041280c5d5360e5805305ed9fe4034acc07ab057d2a",
         "apiVersion": 1,
