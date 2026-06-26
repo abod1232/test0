@@ -74,7 +74,6 @@ subprojects {
     implementation("androidx.browser:browser:1.9.0")
     implementation("androidx.room:room-ktx:2.8.0")
     implementation("androidx.preference:preference-ktx:1.2.1")
-    testImplementation("junit:junit:4.13.2")
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
     cloudstream("com.lagradost:cloudstream3:pre-release")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
