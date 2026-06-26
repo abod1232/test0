@@ -76,7 +76,7 @@ subprojects {
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
     cloudstream("com.lagradost:cloudstream3:pre-release")
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+
     implementation("org.jsoup:jsoup:1.17.2")
     implementation("org.mozilla:rhino:1.7.14")
     implementation("com.google.protobuf:protobuf-javalite:3.25.1")
