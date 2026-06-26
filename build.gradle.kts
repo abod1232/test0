@@ -70,19 +70,21 @@ subprojects {
     dependencies {
         val cloudstream by configurations
         val implementation by configurations
-
-        // Stubs for all cloudstream classes
-        cloudstream("com.lagradost:cloudstream3:pre-release")
-
         implementation("com.google.android.material:material:1.13.0")
-        implementation("androidx.browser:browser:1.9.0")
-        implementation("androidx.room:room-ktx:2.8.0")
-        implementation(kotlin("stdlib")) // Adds Standard Kotlin Features
-        implementation("com.github.Blatzar:NiceHttp:0.4.11") // HTTP Lib
-        implementation("org.jsoup:jsoup:1.18.3") // HTML Parser
-        // IMPORTANT: Do not bump Jackson above 2.13.1, as newer versions will
-        // break compatibility on older Android devices.
-        implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.13.1") // JSON Parser
+    implementation("androidx.browser:browser:1.9.0")
+    implementation("androidx.room:room-ktx:2.8.0")
+    implementation("androidx.preference:preference-ktx:1.2.1")
+    testImplementation("junit:junit:4.13.2")
+    implementation("com.squareup.okhttp3:okhttp:4.11.0")
+    cloudstream("com.lagradost:cloudstream3:pre-release")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+    implementation("org.jsoup:jsoup:1.17.2")
+    implementation("org.mozilla:rhino:1.7.14")
+    implementation("com.google.protobuf:protobuf-javalite:3.25.1")
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.25.2")
+    implementation("com.github.spotbugs:spotbugs-annotations:4.8.2")
+    implementation("com.google.code.findbugs:jsr305:3.0.2")
+    implementation(kotlin("stdlib-jdk8"))
     }
 }
 
